@@ -1,0 +1,626 @@
+{
+  "name": "Workflow 1 Coletor Diário",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WORKFLOW 1 - COLETOR DIÁRIO DE IA\n\n**Propósito:** Coleta automaticamente artigos e tendências de IA  todo dia às 8h da manhã.\n\n**O que o workflow faz:**\n1. Dispara às 8h todo dia\n2. Coleta artigos de fontes\n3. Normaliza os dados\n4. GPT-4o classifica, pontua relevância (1-10)\n5. Armazena tudo no Google Sheets como banco de dados\n6. Envia resumo diário no Slack\n\n**Parte do ecossistema:** Este workflow alimenta o Workflow 2 (Sintetizador Semanal) e o Workflow 3 (Chatbot Slack).",
+        "height": 332,
+        "width": 500,
+        "color": 7
+      },
+      "id": "7e0c40fe-9dc8-4274-ad1a-e4857913d56f",
+      "name": "📌 VISÃO GERAL DO WORKFLOW",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "GATILHO\n\nEste nó acorda o workflow automaticamente todo dia às 8h\n\nVocê pode alterar o horário aqui se preferir outro momento.",
+        "width": 300,
+        "color": 4
+      },
+      "id": "977ba9da-f80a-4a0f-bc3c-4aac5274a8e0",
+      "name": "Sticky Note - Trigger",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -272,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "\nNORMALIZAÇÃO\n\nO Code Node logo abaixo normaliza os campos, pois cada fonte tem estrutura diferente\n\nApós normalização, todos os itens ficam com o mesmo formato:\n`{ titulo, url, resumo, fonte, data_coleta }`\n\nIsso é essencial para o GPT-4o processar tudo de forma consistente.",
+        "height": 240,
+        "width": 420,
+        "color": 6
+      },
+      "id": "c31bbf93-c89e-4035-a52b-b9d19598237a",
+      "name": "Sticky Note - Merge",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "ANÁLISE COM IA\n\nA IA recebe cada artigo e retorna 4 análises:\n\n1. **Pontuação de relevância (1-10):** Quão importante é essa notícia para o ecossistema de IA?\n2. **Sentimento:** positivo / negativo / neutro\n3. **Categoria:** LLMs / Computer Vision / Robótica / Ética em IA / Ferramentas / Pesquisa / Mercado\n4. **Oportunidade de startup:** Se identificada, descreve brevemente uma lacuna de mercado gerada por essa notícia\n\nIsso transforma dados brutos em inteligência analítica",
+        "height": 280,
+        "width": 460,
+        "color": 3
+      },
+      "id": "c3d3d0b9-036b-4e9e-8b01-a0054cbbbd01",
+      "name": "Sticky Note - GPT",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        944,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "content": "GOOGLE SHEETS\n\nO Google Sheets funciona como banco de dados central do ecossistema.\n\n**Estrutura da planilha (colunas):**\n`data_coleta | titulo | url | fonte | resumo | pontuacao | sentimento | categoria | oportunidade_startup | data_publicacao | autor`",
+        "height": 200,
+        "width": 440,
+        "color": 2
+      },
+      "id": "80a1d134-7155-4961-a645-2542880797ad",
+      "name": "Sticky Note - Sheets",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1424,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "content": "AGREGAÇÃO PARA RESUMO DIÁRIO\n\nAntes de enviar a notificação, o Code Node aqui agrega estatísticas do dia:\n\n- Total de artigos coletados\n- Top 5 artigos (maior pontuação)\n- Distribuição por categoria\n- Artigos com oportunidade de startup identificada\n- Sentimento geral do dia (positivo/neutro/negativo)",
+        "height": 220,
+        "width": 400,
+        "color": 6
+      },
+      "id": "16841009-eb4e-4008-8d50-c2c535072507",
+      "name": "Sticky Note - Agrega",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1888,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "NOTIFICAÇÃO NO SLACK\n\nEnvia um resumo ao final da coleta diária com:\n- Total de artigos coletados e sentimento do dia\n- Top 5 artigos com link direto\n- Oportunidades de startup identificadas\n- Breakdown por categoria\n\nEste resumo serve como confirmação de que o workflow rodou com sucesso, e como preview do conteúdo antes do relatório semanal completo do Workflow 2.",
+        "height": 256,
+        "width": 400
+      },
+      "id": "e722e2c8-c486-48a6-9841-b394b2789e2f",
+      "name": "Sticky Note - Slack",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2304,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "content": "TRATAMENTO DE ERROS\n\nEste captura qualquer erro que ocorra no workflow e envia um alerta no Slack.\n\nO alerta inclui:\n- Qual nó falhou\n- Qual foi o erro\n- Timestamp do ocorrido\n\nAssim você sabe exatamente o que consertar sem precisar abrir o n8n.",
+        "height": 252,
+        "width": 396,
+        "color": 7
+      },
+      "id": "7ba7f105-b9de-4064-b9bb-61c8641c7176",
+      "name": "Sticky Note - Error",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2544,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "llama-3.3-70b-versatile",
+          "mode": "list",
+          "cachedResultName": "LLAMA-3.3-70B-VERSATILE"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "=Você é um analista sênior de IA. Analise o artigo e retorne SOMENTE este JSON:\n{\n  \"titulo\": \"(copie exatamente o titulo recebido)\",\n  \"url\": \"(copie exatamente a url recebida)\",\n  \"fonte\": \"(copie exatamente a fonte recebida)\",\n  \"autor\": \"(copie exatamente o autor recebido)\",\n  \"data_publicacao\": \"(copie exatamente a data_publicacao recebida)\",\n  \"data_coleta\": \"(copie exatamente a data_coleta recebida)\",\n  \"resumo\": \"Uma frase objetiva de no máximo 100 caracteres sobre o artigo.\",\n  \"pontuacao_relevancia\": 8,\n  \"sentimento\": \"positivo\",\n  \"categoria\": \"LLMs\",\n  \"oportunidade_startup\": \"Descrição em até 80 caracteres, ou null.\"\n}\n\nCategorias válidas: LLMs, Computer Vision, Robótica, Ética em IA, Ferramentas Dev, Pesquisa Acadêmica, Mercado e Negócios, Hardware e Infraestrutura, Outros\n\nCritérios de pontuação:\n- 9-10: Breakthrough real, mudança de paradigma\n- 7-8: Desenvolvimento significativo\n- 5-6: Novidade incremental\n- 3-4: Atualização menor\n- 1-2: Irrelevante ou não relacionado a IA"
+            },
+            {
+              "content": "=TITULO: {{ $json.titulo }}\nURL: {{ $json.url }}\nFONTE: {{ $json.fonte }}\nAUTOR: {{ $json.autor }}\nDATA_PUBLICACAO: {{ $json.data_publicacao }}\nDATA_COLETA: {{ $json.data_coleta }}\nRESUMO: {{ $json.resumo }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "store": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        1056,
+        624
+      ],
+      "id": "5e2404f3-6f5f-4569-b496-53ce6e038374",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "pbyrhOwgmk6HmElH",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "94099ca7-d7d9-4d07-a4ed-77c675be4a5a",
+      "name": "Todo dia às 8h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -160,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/foorilla/allainews_sources/refs/heads/main/README.md",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        0,
+        624
+      ],
+      "id": "2b1d6f8f-4006-4355-af05-755671d3085e",
+      "name": "Coleta fontes"
+    },
+    {
+      "parameters": {
+        "jsCode": "const readme = $input.first().json.data || '';\n\nconst sectionMatch = readme.match(/## AI, ML, Big Data News([\\s\\S]*?)##/);\nconst section = sectionMatch ? sectionMatch[1] : readme;\n\nconst urls = [...section.matchAll(/\\(RSS feed:\\s*(https?:\\/\\/[^\\)]+)\\)/g)]\n  .map(m => m[1].trim())\n  .filter(url => url.length > 10);\n\nconsole.log(`Total de feeds encontrados: ${urls.length}`);\n\nreturn urls.map(url => ({ json: { rss_url: url } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        624
+      ],
+      "id": "2eecd763-7657-445b-8c5e-b240accf51b4",
+      "name": "Organiza links"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.rss_url }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        384,
+        624
+      ],
+      "id": "eafbecf4-adad-4b30-8f38-2d471ed4c6b6",
+      "name": "Pega os dados",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const hoje = new Date().toISOString().split('T')[0];\nconst resultado = [];\n\nfor (const input of $input.all()) {\n  const raw = input.json.data || input.json.body || '';\n  if (!raw || typeof raw !== 'string') continue;\n\n  // Extrai título do canal/feed\n  const feedTitleMatch = raw.match(/<title[^>]*>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?<\\/title>/i);\n  const feedTitle = feedTitleMatch\n    ? feedTitleMatch[1].replace(/<[^>]*>/g, '').trim()\n    : 'RSS';\n\n  // Extrai cada <item>\n  const itens = [...raw.matchAll(/<item[^>]*>([\\s\\S]*?)<\\/item>/gi)];\n\n  for (const itemMatch of itens) {\n    const bloco = itemMatch[1];\n\n    const get = (tag) => {\n      const m = bloco.match(\n        new RegExp(`<${tag}[^>]*>(?:<!\\\\[CDATA\\\\[)?([\\\\s\\\\S]*?)(?:\\\\]\\\\]>)?<\\\\/${tag}>`, 'i')\n      );\n      return m ? m[1].replace(/<[^>]*>/g, '').trim() : '';\n    };\n\n    const titulo = get('title');\n    const url    = get('link') || get('guid');\n\n    if (!titulo || titulo.length < 5) continue;\n\n    resultado.push({ json: {\n      titulo,\n      url,\n      resumo: (get('description') || get('summary') || get('content:encoded') || '').slice(0, 80),\n      fonte:            feedTitle,\n      autor:            get('dc:creator') || get('author') || '',\n      data_publicacao:  get('pubDate') || get('dc:date') || new Date().toISOString(),\n      data_coleta:      hoje,\n      // campos a preencher pelo GPT\n      pontuacao_relevancia: null,\n      sentimento:           null,\n      categoria:            null,\n      oportunidade_startup: null\n    }});\n  }\n}\n\nconsole.log(`Artigos normalizados: ${resultado.length}`);\nreturn resultado;"
+      },
+      "id": "6726955b-dc0a-4e7e-a5c1-404cbe411d04",
+      "name": "Normaliza os dados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const itens = $input.all().map(i => i.json);\n\nconst palavrasAlta = [\n  'gpt', 'llm', 'openai', 'anthropic', 'gemini', 'claude', 'mistral',\n  'neural', 'deep learning', 'machine learning', 'artificial intelligence',\n  'chatbot', 'transformer', 'diffusion', 'multimodal', 'agent',\n  'benchmark', 'fine-tun', 'open source', 'language model'\n];\n\nconst palavrasBaixa = [\n  'deal', 'promo', 'unbox', 'hands-on', 'best buy',\n  'discount', 'sale', 'coupon'\n];\n\nfunction pontuarLocalmente(item) {\n  const texto = `${item.titulo} ${item.resumo}`.toLowerCase();\n  let score = 0;\n  palavrasAlta.forEach(p => { if (texto.includes(p)) score += 2; });\n  palavrasBaixa.forEach(p => { if (texto.includes(p)) score -= 3; });\n  if (item.fonte?.toLowerCase().includes('arxiv')) score += 4;\n  if (item.fonte?.toLowerCase().includes('github')) score += 2;\n  if ((item.resumo || '').length < 50) score -= 1;\n  return score;\n}\n\nconst urlsVistas = new Set();\nconst titulosVistos = [];\n\nfunction similaridade(a, b) {\n  const pa = new Set(a.toLowerCase().split(/\\s+/));\n  const pb = b.toLowerCase().split(/\\s+/);\n  const comuns = pb.filter(p => pa.has(p)).length;\n  return comuns / Math.max(pa.size, pb.length);\n}\n\nconst resultado = [];\nfor (const item of itens) {\n  if (item.url && urlsVistas.has(item.url)) continue;\n  if (titulosVistos.some(t => similaridade(t, item.titulo) > 0.75)) continue;\n  if (item.url) urlsVistas.add(item.url);\n  titulosVistos.push(item.titulo);\n  resultado.push(item);\n}\n\nreturn resultado\n  .map(item => ({ ...item, score_local: pontuarLocalmente(item) }))\n  .sort((a, b) => b.score_local - a.score_local)\n  .slice(0, 10)\n  .map(item => ({ json: item }));"
+      },
+      "id": "2e4f2f40-3471-4f63-9604-06257075fb45",
+      "name": "Prepara os dados para a IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n  const j = item.json;\n  \n  // Tenta todos os caminhos possíveis\n  const text = (\n    j?.content?.[0]?.text ||\n    j?.message?.content ||\n    j?.choices?.[0]?.message?.content ||\n    j?.text ||\n    j?.output?.[0]?.content?.[0]?.text ||\n    ''\n  ).replace(/`/g, '').trim();\n\n  if (!text) return { json: { _erro: 'texto vazio', _keys: JSON.stringify(Object.keys(j)) } };\n\n  try {\n    return { json: JSON.parse(text) };\n  } catch(e) {\n    return { json: { _erro: e.message, _texto: text.slice(0, 200) } };\n  }\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        624
+      ],
+      "id": "18d0940a-caa7-4365-9841-020742e2518c",
+      "name": "Alinhamento da saída"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "107du4AAkawc3UlqAo2wwQ6bH7XiCJWMMNYbghRdTbO8",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Artigos",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/107du4AAkawc3UlqAo2wwQ6bH7XiCJWMMNYbghRdTbO8/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "titulo": "={{ $json.titulo }}",
+            "url": "={{ $json.url }}",
+            "fonte": "={{ $json.fonte }}",
+            "resumo": "={{ $json.resumo }}",
+            "pontuacao_relevancia": "={{ $json.pontuacao_relevancia }}",
+            "sentimento": "={{ $json.sentimento }}",
+            "categoria": "={{ $json.categoria }}",
+            "oportunidade_startup": "={{ $json.oportunidade_startup }}",
+            "data_publicacao": "={{ $json.data_publicacao }}",
+            "autor": "={{ $json.autor }}",
+            "data_coleta": "={{ $json.data_coleta }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "data_coleta",
+              "displayName": "data_coleta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "titulo",
+              "displayName": "titulo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fonte",
+              "displayName": "fonte",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resumo",
+              "displayName": "resumo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pontuacao_relevancia",
+              "displayName": "pontuacao_relevancia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sentimento",
+              "displayName": "sentimento",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "categoria",
+              "displayName": "categoria",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "oportunidade_startup",
+              "displayName": "oportunidade_startup",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "data_publicacao",
+              "displayName": "data_publicacao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "autor",
+              "displayName": "autor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "23a41b60-4af9-4a7e-9e90-95795cc94a90",
+      "name": "Salva no Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.3,
+      "position": [
+        1680,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "v47jgqfs4W4zHr27",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const itens = $input.all().map(i => i.json);\nconst hoje = new Date().toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });\n\n// Top 5 artigos por relevância\nconst top5 = [...itens]\n  .sort((a, b) => (b.pontuacao_relevancia || 0) - (a.pontuacao_relevancia || 0))\n  .slice(0, 5);\n\n// Contagem por categoria\nconst porCategoria = {};\nitens.forEach(i => {\n  const cat = i.categoria || 'Outros';\n  porCategoria[cat] = (porCategoria[cat] || 0) + 1;\n});\n\n// Contagem de sentimentos\nconst sentimentos = { positivo: 0, neutro: 0, negativo: 0 };\nitens.forEach(i => {\n  const s = i.sentimento || 'neutro';\n  if (sentimentos[s] !== undefined) sentimentos[s]++;\n});\n\n// Artigos com oportunidade de startup\nconst comOportunidade = itens.filter(i => i.oportunidade_startup && i.oportunidade_startup !== 'null');\n\n// Sentimento dominante\nconst sentimentoDominante = Object.entries(sentimentos)\n  .sort((a, b) => b[1] - a[1])[0][0];\n\nconst emojiSentimento = { positivo: '🟢', neutro: '🟡', negativo: '🔴' };\n\nreturn [{\n  json: {\n    data: hoje,\n    total_artigos: itens.length,\n    top5,\n    por_categoria: porCategoria,\n    sentimentos,\n    sentimento_dominante: sentimentoDominante,\n    emoji_sentimento: emojiSentimento[sentimentoDominante] || '🟡',\n    oportunidades_startup: comOportunidade.slice(0, 3),\n    total_oportunidades: comOportunidade.length\n  }\n}];"
+      },
+      "id": "d6cb99c4-6f48-424d-af9c-f1f05fca49c3",
+      "name": "Agrega dados do dia",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1904,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\n\nconst top5 = (d.top5 || []).map((a, i) => \n  `${i+1}. [${a.pontuacao_relevancia}/10] *${(a.titulo || '').slice(0, 80)}*\\n   📌 ${a.categoria} | ${a.fonte}\\n   🔗 ${a.url}`\n).join('\\n\\n');\n\nconst oportunidades = (d.oportunidades_startup || []).length > 0\n  ? d.oportunidades_startup.map(o => \n      `• *${(o.titulo || '').slice(0, 60)}...*\\n  💼 ${o.oportunidade_startup}`\n    ).join('\\n')\n  : 'Nenhuma identificada hoje.';\n\nconst categorias = Object.entries(d.por_categoria || {})\n  .map(([k, v]) => `• ${k}: ${v}`)\n  .join('\\n');\n\nreturn [{\n  json: {\n    mensagem: `🤖 *Inteli AI Intelligence Hub — Coleta Diária*\\n📅 ${d.data}\\n\\n${d.emoji_sentimento} *Sentimento geral:* ${d.sentimento_dominante} | 📰 *${d.total_artigos} artigos* coletados\\n\\n---\\n\\n🏆 *TOP 5 ARTIGOS DO DIA:*\\n${top5}\\n\\n---\\n\\n💡 *${d.total_oportunidades} OPORTUNIDADE(S) DE STARTUP:*\\n${oportunidades}\\n\\n---\\n\\n📊 *POR CATEGORIA:*\\n${categorias}\\n\\n_Próximo passo: Workflow 2 roda todo domingo_ 🗓️`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2096,
+        624
+      ],
+      "id": "1d3d8eea-cd98-4070-ac02-688690467a1d",
+      "name": "Arruma mensagem para o slack"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AQS98FHL3",
+          "mode": "list",
+          "cachedResultName": "novo-canal"
+        },
+        "text": "={{ $json.mensagem }}",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "24cda4c4-80b7-4552-a8ce-a806cafb0f43",
+      "name": "Slack com o resumo diário",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2304,
+        624
+      ],
+      "webhookId": "6e4a184c-7152-423f-92ca-b689536ddfef",
+      "credentials": {
+        "slackApi": {
+          "id": "1LAsyapwy5KJ8kGr",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Alinhamento da saída",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Todo dia às 8h": {
+      "main": [
+        [
+          {
+            "node": "Coleta fontes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coleta fontes": {
+      "main": [
+        [
+          {
+            "node": "Organiza links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Organiza links": {
+      "main": [
+        [
+          {
+            "node": "Pega os dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pega os dados": {
+      "main": [
+        [
+          {
+            "node": "Normaliza os dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normaliza os dados": {
+      "main": [
+        [
+          {
+            "node": "Prepara os dados para a IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepara os dados para a IA": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alinhamento da saída": {
+      "main": [
+        [
+          {
+            "node": "Salva no Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salva no Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Agrega dados do dia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agrega dados do dia": {
+      "main": [
+        [
+          {
+            "node": "Arruma mensagem para o slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Arruma mensagem para o slack": {
+      "main": [
+        [
+          {
+            "node": "Slack com o resumo diário",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack com o resumo diário": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "ZvurS1yCTPMn67zZ",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "29674c42-7b27-426b-adb5-7aa62d538d61",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "721f9dec61e8c127d66aced52bb5ac856cdc516602b0f177c421535fa1b767af"
+  },
+  "id": "RC49sFuqXCDw6O1j",
+  "tags": []
+}

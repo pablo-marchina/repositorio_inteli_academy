@@ -1,0 +1,71 @@
+{
+  "name": "Worflow de Erro",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -208,
+        -64
+      ],
+      "id": "7e2c1e15-4165-4f1a-ac80-e03b888c43da",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AQS98FHL3",
+          "mode": "list",
+          "cachedResultName": "novo-canal"
+        },
+        "text": "=🚨 *ERRO no Workflow 1 — Coletor Diário*\n\n❌ *Nó com falha:* {{ $json.nodeName || 'Desconhecido' }}\n📋 *Erro:* {{ $json.message || $json.error || 'Erro desconhecido' }}\n🕐 *Horário:* {{ new Date().toLocaleString('pt-BR') }}\n\n_Verifique o n8n para mais detalhes._",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "0118b25b-e5d1-4249-883a-5875fbf90e03",
+      "name": "Alerta de Erro",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        -64
+      ],
+      "webhookId": "817e34a6-3cf6-44e6-a982-0a6772eb779b",
+      "credentials": {
+        "slackApi": {
+          "id": "1LAsyapwy5KJ8kGr",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Alerta de Erro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "2ff55f52-6534-42ec-93e7-b6f430a445c3",
+  "meta": {
+    "instanceId": "721f9dec61e8c127d66aced52bb5ac856cdc516602b0f177c421535fa1b767af"
+  },
+  "id": "ZvurS1yCTPMn67zZ",
+  "tags": []
+}

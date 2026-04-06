@@ -1,0 +1,369 @@
+{
+  "name": "Workflow 3 Chatbot Slack",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Chatbot Slack\n\n## O que este workflow faz\nFica **sempre ativo** (webhook permanente) e responde perguntas sobre IA diretamente no Slack, consultando os artigos já coletados pelo Workflow 1.\n\n## Como se conecta aos outros workflows\n- **Workflow 1** alimenta o Google Sheets diariamente\n- Este workflow **consulta o Sheets** e usa IA para responder com base nos dados reais coletados",
+        "height": 304,
+        "width": 520,
+        "color": 5
+      },
+      "id": "839090c9-a0da-4a83-b4e3-38552204d46e",
+      "name": "📋 SOBRE ESTE WORKFLOW",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -592,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "content": "WEBHOOK\n\nRecebe as mensagens do Slack.",
+        "height": 90,
+        "color": 3
+      },
+      "id": "33be2b50-31a8-4795-a746-d91a0a7b8f16",
+      "name": "Banner Camada 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "content": "EXTRAÇÃO DA PERGUNTA\n\nExtrai e normaliza a pergunta que o usuário enviou.\n\nTambém extrai:\n- `user_id` — para mencionar o usuário na resposta\n- `channel_id` — para saber onde responder\n- `response_url` — URL alternativa para resposta assíncrona",
+        "height": 244,
+        "width": 340,
+        "color": 3
+      },
+      "id": "c1f67e10-8899-4197-b367-419cb7082c74",
+      "name": "Banner Camada 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        544,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "CONSULTA AO SHEETS\n\nLê os artigos coletados pelo Workflow 1.\n\nBusca os artigos dos **últimos 7 dias** com pontuação de relevância **≥ 6**.",
+        "height": 148,
+        "width": 340,
+        "color": 3
+      },
+      "id": "8ab3531e-672a-43ec-91d4-44ac033a1d34",
+      "name": "Banner Camada 3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        944,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "content": "RESPOSTA COM IA\n\nE responde de forma:\n- Baseada em fatos reais (não inventa)\n- Formatada para Slack (usa *negrito*, `código`, bullet points)\n- Com links dos artigos quando relevante",
+        "height": 180,
+        "width": 340,
+        "color": 3
+      },
+      "id": "2a4c9a00-b2fb-4bfb-a7d2-159db827e7c9",
+      "name": "Banner Camada 4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1328,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "content": "ENVIO DA RESPOSTA\n\nEnvia a resposta formatada de volta ao Slack no mesmo canal onde a pergunta foi feita.\n",
+        "height": 104,
+        "width": 340,
+        "color": 3
+      },
+      "id": "3703a253-465f-4a5c-9cde-29a8fcdbc135",
+      "name": "Banner Camada 5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1728,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chatbot-ia",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "25fe81af-2c12-4663-a5a5-ed9081c98e0e",
+      "name": "Webhook do Slack",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        64,
+        368
+      ],
+      "webhookId": "a397d659-b33b-4a56-a2f3-e8a8a90f2ab7"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ response_type: 'in_channel', text: '⏳ Consultando a base de IA... aguarde alguns segundos!' }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "1c342aba-a485-49a5-9e5b-252e671c67bf",
+      "name": "Responde Imediatamente",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        304,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\n\nconst isSlashCommand = !!body.command;\n\n// Mensagem direta: o texto está em body.text ou body.event.text\nconst perguntaBruta = (\n  body.text ||\n  body.event?.text ||\n  ''\n).trim();\n\nconst pergunta = perguntaBruta\n  .replace(/<@[A-Z0-9]+>/g, '')\n  .trim();\n\nif (!pergunta) {\n  throw new Error('Nenhuma pergunta encontrada na mensagem.');\n}\n\n// Canal e usuário para resposta\nconst channelId   = body.channel_id   || body.event?.channel || body.channel || '';\nconst userId      = body.user_id       || body.event?.user    || '';\nconst responseUrl = body.response_url  || '';\n\nconsole.log(`Pergunta recebida: \"${pergunta}\" | Canal: ${channelId} | Usuário: ${userId}`);\n\nreturn [{\n  json: {\n    pergunta,\n    channelId,\n    userId,\n    responseUrl,\n    isSlashCommand,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "8aedfc7a-59c2-4793-87c9-c91da565dcfe",
+      "name": "Extrai pergunta do slack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "107du4AAkawc3UlqAo2wwQ6bH7XiCJWMMNYbghRdTbO8",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Artigos",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/107du4AAkawc3UlqAo2wwQ6bH7XiCJWMMNYbghRdTbO8/edit#gid=0"
+        },
+        "options": {}
+      },
+      "id": "7f07c7df-2412-4c38-9ae9-9e235fd4ec53",
+      "name": "Lê Artigos do Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        800,
+        368
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "v47jgqfs4W4zHr27",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n\nconst todosArtigos = $input.all().map(i => i.json);\n\n// Pega a pergunta do nó de extração \nconst contexto = $('Extrai pergunta do slack').first().json;\nconst pergunta = contexto.pergunta;\n\n// Filtra últimos 7 dias\nconst seteDiasAtras = new Date();\nseteDiasAtras.setDate(seteDiasAtras.getDate() - 7);\n\nconst artigosFiltrados = todosArtigos\n  .filter(a => {\n    if (!a.data_coleta) return false;\n    const dataArtigo = new Date(a.data_coleta);\n    return dataArtigo >= seteDiasAtras;\n  })\n  .filter(a => {\n    // Aceita artigos com score >= 6 ou sem score definido\n    const score = Number(a.pontuacao_relevancia);\n    return isNaN(score) || score >= 6;\n  })\n  .sort((a, b) => (Number(b.pontuacao_relevancia) || 0) - (Number(a.pontuacao_relevancia) || 0))\n  .slice(0, 30);\n\nconsole.log(`Total de artigos na base: ${todosArtigos.length}`);\nconsole.log(`Artigos filtrados (7 dias, score>=6): ${artigosFiltrados.length}`);\n\n// Formata os artigos de forma compacta para o contexto da IA\nconst contextoArtigos = artigosFiltrados.length > 0\n  ? artigosFiltrados.map((a, i) =>\n      `[${i+1}] ${a.titulo || 'Sem título'}\\n` +\n      `Fonte: ${a.fonte || '?'} | Score: ${a.pontuacao_relevancia || '?'}/10 | ` +\n      `Categoria: ${a.categoria || '?'} | Sentimento: ${a.sentimento || '?'}\\n` +\n      `Resumo: ${a.resumo || 'Sem resumo'}\\n` +\n      `URL: ${a.url || ''}\\n` +\n      (a.oportunidade_startup ? `Startup: ${a.oportunidade_startup}\\n` : '')\n    ).join('\\n---\\n')\n  : 'Nenhum artigo coletado nos últimos 7 dias. O Workflow 1 ainda não foi executado ou não encontrou artigos.';\n\nreturn [{\n  json: {\n    pergunta,\n    channelId:     contexto.channelId,\n    userId:        contexto.userId,\n    responseUrl:   contexto.responseUrl,\n    contextoArtigos,\n    totalArtigos:  artigosFiltrados.length\n  }\n}];"
+      },
+      "id": "dd48d1da-f1d7-4993-9a1f-8cecee46d434",
+      "name": "Filtra e prepara para a IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "llama-3.3-70b-versatile",
+          "mode": "list",
+          "cachedResultName": "LLAMA-3.3-70B-VERSATILE"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "Você é o assistente de IA da Inteli Academy, um clube de IA da faculdade Inteli (São Paulo). Você responde perguntas sobre notícias e tendências de IA com base nos artigos reais coletados automaticamente.\n\n**Regras:**\n- Responda SOMENTE com base nos artigos fornecidos. Se a informação não estiver nos artigos, diga claramente que não encontrou dados sobre isso na base desta semana.\n- Use formatação Slack: *negrito*, _itálico_, `código`, • para listas\n- Inclua os links dos artigos mais relevantes para a pergunta\n- Seja direto e objetivo — máximo 400 palavras\n- Responda sempre em português do Brasil\n- Se a base estiver vazia, oriente o usuário a aguardar o Workflow 1 ser executado\n\n**Tom:** profissional mas acessível, como um colega pesquisador.",
+              "role": "system"
+            },
+            {
+              "content": "=Pergunta do usuário: {{ $json.pergunta }}\n\n---\nARTIGOS DISPONÍVEIS NA BASE (últimos 7 dias):\n\n{{ $json.contextoArtigos }}"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 800,
+          "temperature": 0.3
+        }
+      },
+      "id": "45fc0f58-dfd9-48c8-b6d2-6e6bbd88fc47",
+      "name": "IA Responde a Pergunta",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1328,
+        368
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "pbyrhOwgmk6HmElH",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $input.first().json;\n\n// Extrai o texto da IA (mesmo padrão dos outros workflows)\nconst respostaIA = (\n  j?.content?.[0]?.text ||\n  j?.message?.content ||\n  j?.choices?.[0]?.message?.content ||\n  j?.text ||\n  ''\n).trim();\n\nif (!respostaIA) {\n  throw new Error('A IA retornou uma resposta vazia.');\n}\n\n// Recupera o contexto (canal, usuário, total de artigos)\nconst ctx = $('Filtra e prepara para a IA').first().json;\n\n// Monta a mensagem final formatada para o Slack\nconst mensagem = [\n  `🤖 *Inteli AI Intelligence Hub*`,\n  ``,\n  respostaIA,\n  ``,\n  `---`,\n  `_Base: ${ctx.totalArtigos} artigos coletados nos últimos 7 dias_`\n].join('\\n');\n\nconsole.log(`Resposta montada. Tamanho: ${mensagem.length} chars. Enviando para canal: ${ctx.channelId}`);\n\nreturn [{\n  json: {\n    mensagem,\n    channelId:    ctx.channelId,\n    userId:       ctx.userId,\n    totalArtigos: ctx.totalArtigos\n  }\n}];"
+      },
+      "id": "0a5489b9-db3e-4bf9-aff4-7bbb77a054c5",
+      "name": "Formata a resposta da IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.channelId }}"
+        },
+        "text": "={{ $json.mensagem }}",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "1d5e60f4-7503-478b-ac91-e58de3340cb3",
+      "name": "Envia Resposta no Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1840,
+        368
+      ],
+      "webhookId": "3daf8bc7-ec42-4a4a-914a-b833801943b9",
+      "credentials": {
+        "slackApi": {
+          "id": "1LAsyapwy5KJ8kGr",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook do Slack": {
+      "main": [
+        [
+          {
+            "node": "Responde Imediatamente",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extrai pergunta do slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrai pergunta do slack": {
+      "main": [
+        [
+          {
+            "node": "Lê Artigos do Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lê Artigos do Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Filtra e prepara para a IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtra e prepara para a IA": {
+      "main": [
+        [
+          {
+            "node": "IA Responde a Pergunta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA Responde a Pergunta": {
+      "main": [
+        [
+          {
+            "node": "Formata a resposta da IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formata a resposta da IA": {
+      "main": [
+        [
+          {
+            "node": "Envia Resposta no Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "ZvurS1yCTPMn67zZ",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "8de87e60-69c3-4dd2-a64b-9cc7359eb4db",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "721f9dec61e8c127d66aced52bb5ac856cdc516602b0f177c421535fa1b767af"
+  },
+  "id": "Gu4VvpEZcHdpsiD9",
+  "tags": []
+}

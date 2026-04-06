@@ -1,0 +1,603 @@
+{
+  "name": "Workflow 2 Sintetizador Semanal",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "SINTETIZADOR SEMANAL\n\n**Propósito:** Todo domingo, lê os artigos da semana do Google Sheets, sintetiza com IA e distribui em 4 canais simultâneos.\n\n**O que este workflow faz:**\n1. Dispara todo domingo às 9h\n2. Lê todos os artigos da semana do Google Sheets\n3. Llama 3.3 70b gera 4 análises: resumo executivo, tendências, radar de startups e previsões\n4. Distribui em paralelo para 4 saídas:\n   - Email HTML estilizado via Gmail\n   - Mensagem rica no Slack\n   - Arquivo HTML salvo localmente\n   - Nova aba de resumo no Google Sheets",
+        "height": 324,
+        "width": 540,
+        "color": 7
+      },
+      "id": "8e72edae-6d65-4366-8edb-1e6d4c905ca5",
+      "name": "📌 VISÃO GERAL DO WORKFLOW 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "content": "GATILHO SEMANAL\n\nDispara todo domingo às 9h",
+        "height": 80,
+        "width": 340,
+        "color": 4
+      },
+      "id": "95d90bec-0a22-4c74-88da-eeac3c69dad0",
+      "name": "Sticky Note - Trigger",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        592,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "content": "LEITURA DO GOOGLE SHEETS\n\nLê todos os artigos coletados na semana pelo Workflow 1.\n\nO filtro por data acontece no Code node seguinte, ele seleciona apenas artigos com data_coleta dos últimos 7 dias, garantindo que o relatório seja sempre da semana atual mesmo se o workflow rodar atrasado.",
+        "height": 188,
+        "width": 400,
+        "color": 5
+      },
+      "id": "95aacf7f-09c4-48bb-93ed-21198b0af39e",
+      "name": "Sticky Note - Sheets Read",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        944,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Filtra os artigos dos últimos 7 dias e prepara os dados para a IA.\n\nTambém calcula estatísticas agregadas da semana:\n- Total de artigos por categoria\n- Sentimento médio\n- Top artigos por pontuação\n- Oportunidades de startup únicas\n\nIsso torna o prompt para o modelo muito mais contextualizado.",
+        "height": 236,
+        "width": 400,
+        "color": 6
+      },
+      "id": "ebd721a5-bfc3-4e4f-9786-656c45acd501",
+      "name": "Sticky Note - Filtra",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1376,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "content": "SÍNTESE COM IA\n\nO modelo recebe os top 10 artigos da semana e gera 4 seções de análise em uma única chamada:\n\n1. **resumo_executivo:** Parágrafo de 3-4 frases sobre o estado da IA na semana\n2. **principais_tendencias:** Array com 3 tendências identificadas, cada uma com título e análise\n3. **radar_startups:** Array com 3 oportunidades de negócio concretas derivadas das notícias\n4. **previsoes_proxima_semana:** Array com 3 eventos ou desenvolvimentos prováveis na próxima semana",
+        "height": 280,
+        "width": 460,
+        "color": 3
+      },
+      "id": "f9f1850c-7807-4711-a3c4-eeb47760f6a2",
+      "name": "Sticky Note - IA",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1808,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "MONTAGEM\n\nExtrai o JSON da resposta do modelo e combina com os dados da semana para montar o objeto completo que alimenta as 4 saídas.\n\nO objeto final contém tudo que cada nó de saída precisa:\n- Análises geradas pela IA\n- Estatísticas brutas da semana\n- Top artigos formatados\n- HTML pronto para email e arquivo local",
+        "height": 264,
+        "width": 400,
+        "color": 6
+      },
+      "id": "b48acab1-dbac-4206-8505-edf2ea3c77f7",
+      "name": "Sticky Note - Parse",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2288,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "content": "DISTRIBUIÇÃO EM 4 CANAIS\n\nA partir daqui o fluxo se divide em 4 saídas paralelas que rodam simultaneamente:\n\n1. * Gmail** — email HTML estilizado com o relatório completo\n2. **Slack** — resumo executivo com destaques\n3. **Arquivo HTML** — salvo localmente, abrível no navegador\n4. **Google Sheets** — nova aba com resumo estruturado da semana\n\nTodas as saídas recebem o mesmo objeto do nó anterior e formatam os dados à sua maneira.",
+        "height": 288,
+        "width": 460
+      },
+      "id": "dc98da7d-6d34-4f7e-8ae9-01a34ca3219e",
+      "name": "Sticky Note - Distribuição",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2736,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "107du4AAkawc3UlqAo2wwQ6bH7XiCJWMMNYbghRdTbO8",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Artigos",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/107du4AAkawc3UlqAo2wwQ6bH7XiCJWMMNYbghRdTbO8/edit#gid=0"
+        },
+        "options": {}
+      },
+      "id": "c712b96d-e727-4b20-8dcd-19279618ee0e",
+      "name": "Lê Artigos da Semana",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.3,
+      "position": [
+        1088,
+        304
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "v47jgqfs4W4zHr27",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// FILTRAGEM DOS ARTIGOS DA SEMANA E PREPARAÇÃO DO CONTEXTO\nconst itens = $input.all().map(i => i.json);\n\n// Filtra últimos 7 dias\nconst seteDiasAtras = new Date();\nseteDiasAtras.setDate(seteDiasAtras.getDate() - 7);\n\nconst artigos = itens.filter(item => {\n  if (!item.data_coleta) return false;\n  const data = new Date(item.data_coleta);\n  return data >= seteDiasAtras;\n});\n\nif (artigos.length === 0) {\n  throw new Error('Nenhum artigo encontrado nos últimos 7 dias. Verifique se o Workflow 1 rodou esta semana.');\n}\n\n// Estatísticas da semana\nconst porCategoria = {};\nconst porSentimento = { positivo: 0, neutro: 0, negativo: 0 };\nconst oportunidades = [];\n\nartigos.forEach(a => {\n  const cat = a.categoria || 'Outros';\n  porCategoria[cat] = (porCategoria[cat] || 0) + 1;\n  const s = a.sentimento || 'neutro';\n  if (porSentimento[s] !== undefined) porSentimento[s]++;\n  if (a.oportunidade_startup && a.oportunidade_startup !== 'null') {\n    oportunidades.push(a.oportunidade_startup);\n  }\n});\n\n// Top 10 artigos por pontuação\nconst top10 = [...artigos]\n  .sort((a, b) => (Number(b.pontuacao_relevancia) || 0) - (Number(a.pontuacao_relevancia) || 0))\n  .slice(0, 10);\n\n// Prepara contexto resumido para a IA\nconst contextoArtigos = top10.map((a, i) =>\n  `[${i+1}] ${a.titulo}\\nFonte: ${a.fonte} | Categoria: ${a.categoria} | Pontuação: ${a.pontuacao_relevancia}\\nResumo: ${a.resumo}`\n).join('\\n\\n');\n\nconst semanaFormatada = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });\n\nreturn [{\n  json: {\n    semana: semanaFormatada,\n    total_artigos: artigos.length,\n    top10,\n    por_categoria: porCategoria,\n    por_sentimento: porSentimento,\n    oportunidades_unicas: [...new Set(oportunidades)].slice(0, 5),\n    contexto_para_ia: contextoArtigos\n  }\n}];"
+      },
+      "id": "8d5e0408-5e2d-45d7-be18-294465e4a898",
+      "name": "Filtra e Prepara",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PARSE DA RESPOSTA DA IA E MONTAGEM DO OBJETO FINAL\nconst iaInput = $input.first().json;\nconst dadosSemana = $('Filtra e Prepara').first().json;\n\n// Extrai e parseia o JSON da IA\nconst j = iaInput;\nconst texto = (\n  j?.content?.[0]?.text ||\n  j?.message?.content ||\n  j?.choices?.[0]?.message?.content ||\n  j?.text ||\n  j?.output?.[0]?.content?.[0]?.text ||\n  ''\n).replace(/```json|```/g, '').trim();\nlet analise = {};\ntry {\n  analise = JSON.parse(texto)\n} catch(e) {\n  analise = {\n    resumo_executivo: 'Análise indisponível esta semana.',\n    principais_tendencias: [],\n    radar_startups: [],\n    previsoes_proxima_semana: []\n  };\n}\n\n// Monta HTML estilizado para email e arquivo local\nconst top5Html = dadosSemana.top10.slice(0, 5).map(a =>\n  `<tr>\n    <td style=\"padding:12px;border-bottom:1px solid #1e293b\">\n      <a href=\"${a.url}\" style=\"color:#38bdf8;font-weight:600;text-decoration:none\">${a.titulo}</a>\n      <div style=\"color:#94a3b8;font-size:13px;margin-top:4px\">${a.fonte} · ${a.categoria} · ⭐ ${a.pontuacao_relevancia}/10</div>\n      <div style=\"color:#cbd5e1;font-size:13px;margin-top:4px\">${a.resumo}</div>\n    </td>\n  </tr>`\n).join('');\n\nconst tendenciasHtml = (analise.principais_tendencias || []).map(t =>\n  `<div style=\"margin-bottom:20px;padding:16px;background:#1e293b;border-radius:8px;border-left:3px solid #38bdf8\">\n    <div style=\"color:#38bdf8;font-weight:700;margin-bottom:6px\">📈 ${t.titulo}</div>\n    <div style=\"color:#cbd5e1;font-size:14px\">${t.analise}</div>\n  </div>`\n).join('');\n\nconst startupsHtml = (analise.radar_startups || []).map(s =>\n  `<div style=\"margin-bottom:20px;padding:16px;background:#1e293b;border-radius:8px;border-left:3px solid #a78bfa\">\n    <div style=\"color:#a78bfa;font-weight:700;margin-bottom:6px\">💼 ${s.oportunidade}</div>\n    <div style=\"color:#cbd5e1;font-size:14px\">${s.descricao}</div>\n    <div style=\"color:#64748b;font-size:13px;margin-top:6px\">⚡ ${s.por_que_agora}</div>\n  </div>`\n).join('');\n\nconst previsoesHtml = (analise.previsoes_proxima_semana || []).map(p =>\n  `<div style=\"margin-bottom:16px;padding:14px;background:#1e293b;border-radius:8px;border-left:3px solid #34d399\">\n    <div style=\"color:#34d399;font-weight:600;margin-bottom:4px\">🔮 ${p.previsao}</div>\n    <div style=\"color:#94a3b8;font-size:13px\">${p.base}</div>\n  </div>`\n).join('');\n\nconst categoriasHtml = Object.entries(dadosSemana.por_categoria)\n  .sort((a, b) => b[1] - a[1])\n  .map(([k, v]) => `<span style=\"display:inline-block;margin:4px;padding:4px 10px;background:#1e293b;border-radius:20px;color:#94a3b8;font-size:13px\">${k}: ${v}</span>`)\n  .join('');\n\nconst htmlCompleto = `<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Inteli AI Intelligence Hub — Semana de ${dadosSemana.semana}</title>\n  <style>\n    @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@300;400;600;700&display=swap');\n    * { box-sizing: border-box; margin: 0; padding: 0; }\n    body { background: #020817; color: #e2e8f0; font-family: 'Inter', sans-serif; }\n    .container { max-width: 700px; margin: 0 auto; padding: 40px 20px; }\n    .header { text-align: center; padding: 40px 0; border-bottom: 1px solid #1e293b; margin-bottom: 40px; }\n    .logo { font-family: 'Space Mono', monospace; font-size: 11px; color: #38bdf8; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 16px; }\n    h1 { font-size: 28px; font-weight: 700; color: #f8fafc; line-height: 1.3; }\n    .subtitle { color: #64748b; font-size: 14px; margin-top: 8px; }\n    .stat-row { display: flex; gap: 12px; margin-bottom: 40px; }\n    .stat { flex: 1; background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 16px; text-align: center; }\n    .stat-num { font-size: 28px; font-weight: 700; color: #38bdf8; font-family: 'Space Mono', monospace; }\n    .stat-label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }\n    .section { margin-bottom: 40px; }\n    .section-title { font-family: 'Space Mono', monospace; font-size: 11px; color: #64748b; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #1e293b; }\n    .resumo { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 20px; color: #cbd5e1; line-height: 1.7; font-size: 15px; }\n    table { width: 100%; border-collapse: collapse; background: #0f172a; border-radius: 8px; overflow: hidden; }\n    .footer { text-align: center; padding-top: 40px; border-top: 1px solid #1e293b; color: #475569; font-size: 13px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <div class=\"logo\">Inteli AI Intelligence Hub</div>\n      <h1>Relatório Semanal de IA</h1>\n      <div class=\"subtitle\">Semana de ${dadosSemana.semana}</div>\n    </div>\n    <div class=\"stat-row\">\n      <div class=\"stat\"><div class=\"stat-num\">${dadosSemana.total_artigos}</div><div class=\"stat-label\">Artigos</div></div>\n      <div class=\"stat\"><div class=\"stat-num\">${Object.keys(dadosSemana.por_categoria).length}</div><div class=\"stat-label\">Categorias</div></div>\n      <div class=\"stat\"><div class=\"stat-num\">${dadosSemana.oportunidades_unicas.length}</div><div class=\"stat-label\">Oportunidades</div></div>\n      <div class=\"stat\"><div class=\"stat-num\">${dadosSemana.por_sentimento.positivo}</div><div class=\"stat-label\">Positivos</div></div>\n    </div>\n    <div class=\"section\">\n      <div class=\"section-title\">Resumo Executivo</div>\n      <div class=\"resumo\">${analise.resumo_executivo}</div>\n    </div>\n    <div class=\"section\">\n      <div class=\"section-title\">Principais Tendências</div>\n      ${tendenciasHtml}\n    </div>\n    <div class=\"section\">\n      <div class=\"section-title\">Top 5 Artigos da Semana</div>\n      <table>${top5Html}</table>\n    </div>\n    <div class=\"section\">\n      <div class=\"section-title\">Radar de Startups</div>\n      ${startupsHtml}\n    </div>\n    <div class=\"section\">\n      <div class=\"section-title\">Previsões para a Próxima Semana</div>\n      ${previsoesHtml}\n    </div>\n    <div class=\"section\">\n      <div class=\"section-title\">Distribuição por Categoria</div>\n      <div>${categoriasHtml}</div>\n    </div>\n    <div class=\"footer\">Gerado automaticamente pelo Inteli AI Intelligence Hub · Workflow 2</div>\n  </div>\n</body>\n</html>`;\n\nreturn [{\n  json: {\n    semana: dadosSemana.semana,\n    total_artigos: dadosSemana.total_artigos,\n    por_categoria: dadosSemana.por_categoria,\n    por_sentimento: dadosSemana.por_sentimento,\n    top10: dadosSemana.top10,\n    oportunidades_unicas: dadosSemana.oportunidades_unicas,\n    analise,\n    html_completo: htmlCompleto\n  }\n}];"
+      },
+      "id": "22ed01b2-ff65-4f71-af11-7d2f6ed5721c",
+      "name": "Monta HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "pablo.marchina@sou.inteli.edu.br",
+        "subject": "=🤖 Inteli AI Hub — Relatório Semanal · {{ $json.semana }}",
+        "message": "={{ $json.html_completo }}",
+        "options": {}
+      },
+      "id": "03892507-20d0-4b78-b05e-5604ee24890e",
+      "name": "Gmail Newsletter",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2928,
+        176
+      ],
+      "webhookId": "85ee6be7-7579-4578-a2d3-e6a04941eed7",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "kUGZBRCb4UzoAmI3",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AQS98FHL3",
+          "mode": "list",
+          "cachedResultName": "novo-canal"
+        },
+        "text": "={{ $json.mensagem }}",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "e376d9f3-dcaa-4a02-91e2-8b3d3e1362f6",
+      "name": "Slack Relatório Semanal",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2928,
+        368
+      ],
+      "webhookId": "10df3aac-1b28-450b-bd4c-643b633fb2a4",
+      "credentials": {
+        "slackApi": {
+          "id": "1LAsyapwy5KJ8kGr",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fileName": "=/home/node/relatorios-ia/relatorio-ia.html",
+        "options": {}
+      },
+      "id": "da0d2b56-2ad4-47bd-bf9a-68b3ab6bb2b0",
+      "name": "Salva HTML Localmente",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        2928,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "107du4AAkawc3UlqAo2wwQ6bH7XiCJWMMNYbghRdTbO8",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1942868670,
+          "mode": "list",
+          "cachedResultName": "Resumos Semanais",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/107du4AAkawc3UlqAo2wwQ6bH7XiCJWMMNYbghRdTbO8/edit#gid=1942868670"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "semana": "={{ $json.semana }}",
+            "total_artigos": "={{ $json.total_artigos }}",
+            "positivos": "={{ $json.positivos }}",
+            "neutros": "={{ $json.neutros }}",
+            "negativos": "={{ $json.negativos }}",
+            "resumo_executivo": "={{ $json.resumo_executivo }}",
+            "principais_tendencias": "={{ $json.principais_tendencias }}",
+            "radar_startups": "={{ $json.radar_startups }}",
+            "previsoes_proxima_semana": "={{ $json.previsoes_proxima_semana }}",
+            "categorias_distribuicao": "={{ $json.categorias_distribuicao }}",
+            "data_geracao": "={{ $json.data_geracao }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "semana",
+              "displayName": "semana",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total_artigos",
+              "displayName": "total_artigos",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "positivos",
+              "displayName": "positivos",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "neutros",
+              "displayName": "neutros",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "negativos",
+              "displayName": "negativos",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resumo_executivo",
+              "displayName": "resumo_executivo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "principais_tendencias",
+              "displayName": "principais_tendencias",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "radar_startups",
+              "displayName": "radar_startups",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "previsoes_proxima_semana",
+              "displayName": "previsoes_proxima_semana",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "categorias_distribuicao",
+              "displayName": "categorias_distribuicao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "data_geracao",
+              "displayName": "data_geracao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e9469b8e-7a0d-4c28-91e9-c7562458bb23",
+      "name": "Sheets Resumo Semanal",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.3,
+      "position": [
+        2928,
+        768
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "v47jgqfs4W4zHr27",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// PREPARA LINHA DE RESUMO PARA O GOOGLE SHEETS\nconst d = $input.first().json;\nconst a = d.analise || {};\n\nconst tendencias = (a.principais_tendencias || []).map(t => t.titulo).join(' | ');\nconst startups = (a.radar_startups || []).map(s => s.oportunidade).join(' | ');\nconst previsoes = (a.previsoes_proxima_semana || []).map(p => p.previsao).join(' | ');\nconst categorias = Object.entries(d.por_categoria || {}).map(([k,v]) => `${k}:${v}`).join(', ');\n\nreturn [{ json: {\n  semana: d.semana,\n  total_artigos: d.total_artigos,\n  positivos: d.por_sentimento?.positivo || 0,\n  neutros: d.por_sentimento?.neutro || 0,\n  negativos: d.por_sentimento?.negativo || 0,\n  resumo_executivo: a.resumo_executivo || '',\n  principais_tendencias: tendencias,\n  radar_startups: startups,\n  previsoes_proxima_semana: previsoes,\n  categorias_distribuicao: categorias,\n  data_geracao: new Date().toISOString()\n}}];"
+      },
+      "id": "0f47b70f-47ce-4ad3-8802-f9fad5950ae0",
+      "name": "Prepara Resumo para Sheets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = $input.first().json.html_completo;\nconst buffer = Buffer.from(html, 'utf-8');\n\nreturn [{\n  json: {},\n  binary: {\n    data: {\n      data: buffer.toString('base64'),\n      mimeType: 'text/html',\n      fileName: `relatorio-${new Date().toISOString().split('T')[0]}.html`,\n      fileExtension: 'html'\n    }\n  }\n}];"
+      },
+      "id": "8b618c0b-0ba5-48e4-a2c4-478eca76f143",
+      "name": "Converte HTML para Binário",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// MONTA MENSAGEM SLACK\nconst d = $input.first().json;\nconst a = d.analise || {};\n\nconst tendencias = (a.principais_tendencias || []).map((t, i) =>\n  `${i+1}. *${t.titulo}*\\n   ${t.analise}`\n).join('\\n\\n');\n\nconst startups = (a.radar_startups || []).map(s =>\n  `• *${s.oportunidade}* — ${s.descricao}`\n).join('\\n');\n\nconst previsoes = (a.previsoes_proxima_semana || []).map(p =>\n  `• ${p.previsao}`\n).join('\\n');\n\nconst categorias = Object.entries(d.por_categoria || {})\n  .sort((a, b) => b[1] - a[1])\n  .map(([k, v]) => `${k}: ${v}`)\n  .join(' · ');\n\nreturn [{ json: {\n  mensagem: `📊 *Inteli AI Intelligence Hub — Relatório Semanal*\\n📅 Semana de ${d.semana}\\n📰 *${d.total_artigos} artigos* analisados | 🟢 ${d.por_sentimento?.positivo || 0} positivos\\n\\n---\\n\\n📋 *RESUMO EXECUTIVO*\\n${a.resumo_executivo}\\n\\n---\\n\\n📈 *PRINCIPAIS TENDÊNCIAS*\\n${tendencias}\\n\\n---\\n\\n💼 *RADAR DE STARTUPS*\\n${startups}\\n\\n---\\n\\n🔮 *PREVISÕES PARA A PRÓXIMA SEMANA*\\n${previsoes}\\n\\n---\\n\\n📊 *Por categoria:* ${categorias}\\n\\n_Relatório completo enviado por email_ 📧`\n}}];"
+      },
+      "id": "26743f57-6d26-47ad-9c10-67827f73d99c",
+      "name": "Monta Mensagem Slack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "1f9481e1-529f-46e8-8d9f-a34accd25ef3",
+      "name": "Todo domingo às 9h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        688,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "llama-3.3-70b-versatile",
+          "mode": "list",
+          "cachedResultName": "LLAMA-3.3-70B-VERSATILE"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Você é um analista sênior de inteligência artificial que produz relatórios executivos semanais. Analise os artigos fornecidos e retorne SOMENTE este JSON, sem texto adicional:\n{\n  \"resumo_executivo\": \"Parágrafo de 3-4 frases descrevendo o estado do ecossistema de IA esta semana. Tom analítico e objetivo.\",\n  \"principais_tendencias\": [\n    { \"titulo\": \"Nome da tendência\", \"analise\": \"2-3 frases de análise\" },\n    { \"titulo\": \"Nome da tendência\", \"analise\": \"2-3 frases de análise\" },\n    { \"titulo\": \"Nome da tendência\", \"analise\": \"2-3 frases de análise\" }\n  ],\n  \"radar_startups\": [\n    { \"oportunidade\": \"Nome da oportunidade\", \"descricao\": \"2 frases explicando o mercado\", \"por_que_agora\": \"1 frase sobre o timing\" },\n    { \"oportunidade\": \"Nome da oportunidade\", \"descricao\": \"2 frases explicando o mercado\", \"por_que_agora\": \"1 frase sobre o timing\" },\n    { \"oportunidade\": \"Nome da oportunidade\", \"descricao\": \"2 frases explicando o mercado\", \"por_que_agora\": \"1 frase sobre o timing\" }\n  ],\n  \"previsoes_proxima_semana\": [\n    { \"previsao\": \"O que provavelmente acontecerá\", \"base\": \"Por que você prevê isso\" },\n    { \"previsao\": \"O que provavelmente acontecerá\", \"base\": \"Por que você prevê isso\" },\n    { \"previsao\": \"O que provavelmente acontecerá\", \"base\": \"Por que você prevê isso\" }\n  ]\n}"
+            },
+            {
+              "content": "=Analise os seguintes {{ $json.total_artigos }} artigos coletados na semana de {{ $json.semana }}:\n\n{{ $json.contexto_para_ia }}\n\nEstatísticas adicionais:\n- Distribuição por categoria: {{ Object.entries($json.por_categoria).map(([k,v]) => k+': '+v).join(', ') }}\n- Sentimento: {{ $json.por_sentimento.positivo }} positivos, {{ $json.por_sentimento.neutro }} neutros, {{ $json.por_sentimento.negativo }} negativos"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "store": false
+        }
+      },
+      "id": "9e003b27-4df3-431a-a18f-03db4af4f720",
+      "name": "Sintetiza a Semana",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        1888,
+        304
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "pbyrhOwgmk6HmElH",
+          "name": "OpenAi account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Lê Artigos da Semana": {
+      "main": [
+        [
+          {
+            "node": "Filtra e Prepara",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtra e Prepara": {
+      "main": [
+        [
+          {
+            "node": "Sintetiza a Semana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monta HTML": {
+      "main": [
+        [
+          {
+            "node": "Gmail Newsletter",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Monta Mensagem Slack",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepara Resumo para Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepara Resumo para Sheets": {
+      "main": [
+        [
+          {
+            "node": "Sheets Resumo Semanal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Converte HTML para Binário": {
+      "main": [
+        [
+          {
+            "node": "Salva HTML Localmente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monta Mensagem Slack": {
+      "main": [
+        [
+          {
+            "node": "Slack Relatório Semanal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Todo domingo às 9h": {
+      "main": [
+        [
+          {
+            "node": "Lê Artigos da Semana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sintetiza a Semana": {
+      "main": [
+        [
+          {
+            "node": "Monta HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "d7a9c3bf-27c6-4b82-bdae-b0a454f43e3d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "721f9dec61e8c127d66aced52bb5ac856cdc516602b0f177c421535fa1b767af"
+  },
+  "id": "isxAtIL2NrcBbkYH",
+  "tags": []
+}
