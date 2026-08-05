@@ -2,7 +2,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { collectCandidateArticles, DEFAULT_FEEDS, type FeedSource } from "@/lib/rss";
 import {
   calculateClusterScore,
-  clusterFeatures,
   defaultWeights,
   engagementScore,
   predictEngagement,
@@ -93,8 +92,8 @@ export function currentWeekStart(timeZone: string, date = new Date()) {
 
 export function nextPublishAt(settings: Settings, from = new Date()) {
   const parts = zonedParts(from, settings.timezone);
-  let daysAhead = (settings.publish_weekday - parts.weekday + 7) % 7;
-  let local = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  const daysAhead = (settings.publish_weekday - parts.weekday + 7) % 7;
+  const local = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
   local.setUTCDate(local.getUTCDate() + daysAhead);
   let candidate = zonedDateToUtc(
     local.getUTCFullYear(),
