@@ -17,7 +17,7 @@ jobs:
   bootstrap:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: agent/instagram-ai-weekly-app
           fetch-depth: 0
@@ -35,6 +35,10 @@ jobs:
           base64 --decode /tmp/ia-weekly.tar.gz.b64 > /tmp/ia-weekly.tar.gz
           tar -xzf /tmp/ia-weekly.tar.gz
           rm -rf .bootstrap
+
+          # Workflow files are committed separately through the GitHub connector.
+          # A GitHub Actions token may not update workflow definitions itself.
+          rm -f .github/workflows/ci.yml .github/workflows/automation.yml
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
