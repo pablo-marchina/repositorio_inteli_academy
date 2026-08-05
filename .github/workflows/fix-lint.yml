@@ -1,0 +1,85 @@
+name: Apply lint fixes
+
+on:
+  push:
+    branches:
+      - agent/instagram-ai-weekly-app
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-lint-fixes
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: agent/instagram-ai-weekly-app
+          fetch-depth: 0
+
+      - name: Apply deterministic fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          pipeline = Path("lib/pipeline.ts")
+          text = pipeline.read_text()
+          text = text.replace("  clusterFeatures,\n", "")
+          text = text.replace("  let daysAhead = ", "  const daysAhead = ")
+          text = text.replace("  let local = new Date(", "  const local = new Date(")
+          pipeline.write_text(text)
+
+          login = Path("components/LoginForm.tsx")
+          text = login.read_text()
+          if 'from "next/navigation"' not in text:
+              text = text.replace(
+                  'import { ChangeEvent, FormEvent, useState } from "react";\n',
+                  'import { ChangeEvent, FormEvent, useState } from "react";\nimport { useRouter } from "next/navigation";\n',
+              )
+          if "const router = useRouter();" not in text:
+              text = text.replace(
+                  "export function LoginForm() {\n",
+                  "export function LoginForm() {\n  const router = useRouter();\n",
+              )
+          text = text.replace(
+              '    window.location.assign("/dashboard");',
+              '    router.replace("/dashboard");\n    router.refresh();',
+          )
+          login.write_text(text)
+
+          signout = Path("components/SignOutButton.tsx")
+          text = signout.read_text()
+          if 'from "next/navigation"' not in text:
+              text = text.replace(
+                  'import { useState } from "react";\n',
+                  'import { useState } from "react";\nimport { useRouter } from "next/navigation";\n',
+              )
+          if "const router = useRouter();" not in text:
+              text = text.replace(
+                  "export function SignOutButton() {\n",
+                  "export function SignOutButton() {\n  const router = useRouter();\n",
+              )
+          text = text.replace(
+              '        window.location.assign("/login");',
+              '        router.replace("/login");\n        router.refresh();',
+          )
+          signout.write_text(text)
+          PY
+
+          if git diff --quiet; then
+            echo "No lint fixes remain."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/pipeline.ts components/LoginForm.tsx components/SignOutButton.tsx
+          git commit -m "Resolve lint findings"
+          git push origin HEAD:agent/instagram-ai-weekly-app
