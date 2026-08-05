@@ -8,7 +8,11 @@ function config() {
   if (!values.META_APP_ID || !values.META_APP_SECRET) {
     throw new Error("META_APP_ID and META_APP_SECRET are required to connect Instagram.");
   }
-  return values;
+  return {
+    ...values,
+    META_APP_ID: values.META_APP_ID,
+    META_APP_SECRET: values.META_APP_SECRET
+  };
 }
 
 export function instagramAuthorizationUrl(state: string) {
