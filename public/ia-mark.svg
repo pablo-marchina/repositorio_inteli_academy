@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">Inteli Academy</title>
+  <rect width="128" height="128" rx="26" fill="#2A00FF"/>
+  <path d="M25 91 48 37h18L43 91H25Zm42 0 23-54h15L82 91H67Z" fill="#fff"/>
+  <path d="M53 68h35l-6 14H47l6-14Z" fill="#fff"/>
+</svg>
