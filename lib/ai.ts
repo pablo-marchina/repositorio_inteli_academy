@@ -33,35 +33,65 @@ const reviewSchema = z.object({
 
 type Message = { role: "system" | "user" | "assistant"; content: string };
 
-export async function callGroqJson<T>(messages: Message[], schema: z.ZodType<T>): Promise<T> {
+type GeminiPayload = {
+  candidates?: Array<{
+    content?: { parts?: Array<{ text?: string }> };
+    finishReason?: string;
+  }>;
+  promptFeedback?: { blockReason?: string; blockReasonMessage?: string };
+};
+
+export async function callGeminiJson<T>(messages: Message[], schema: z.ZodType<T>): Promise<T> {
   const config = env();
-  if (!config.GROQ_API_KEY) throw new Error("GROQ_API_KEY is required for generation and review.");
+  if (!config.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is required for generation and review.");
 
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${config.GROQ_API_KEY}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      model: config.GROQ_MODEL,
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages
-    }),
-    cache: "no-store"
-  });
+  const systemInstruction = messages
+    .filter((message) => message.role === "system")
+    .map((message) => message.content)
+    .join("\n\n");
+  const contents = messages
+    .filter((message) => message.role !== "system")
+    .map((message) => ({
+      role: message.role === "assistant" ? "model" : "user",
+      parts: [{ text: message.content }]
+    }));
+  const responseJsonSchema = z.toJSONSchema(schema, { target: "draft-07" }) as Record<string, unknown>;
+  delete responseJsonSchema.$schema;
 
-  if (!response.ok) throw new Error(`Groq request failed (${response.status}): ${await response.text()}`);
-  const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const raw = payload.choices?.[0]?.message?.content;
-  if (!raw) throw new Error("Groq returned no content.");
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.GEMINI_MODEL)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": config.GEMINI_API_KEY,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
+        contents,
+        generationConfig: {
+          temperature: 0.2,
+          responseMimeType: "application/json",
+          responseJsonSchema
+        }
+      }),
+      cache: "no-store"
+    }
+  );
+
+  if (!response.ok) throw new Error(`Gemini request failed (${response.status}): ${await response.text()}`);
+  const payload = (await response.json()) as GeminiPayload;
+  const raw = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
+  if (!raw) {
+    const reason = payload.promptFeedback?.blockReasonMessage ?? payload.promptFeedback?.blockReason ?? payload.candidates?.[0]?.finishReason;
+    throw new Error(`Gemini returned no content${reason ? `: ${reason}` : "."}`);
+  }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw.replace(/^```json\s*|```$/g, "").trim());
   } catch (error) {
-    throw new Error(`Invalid JSON returned by model: ${String(error)}`);
+    throw new Error(`Invalid JSON returned by Gemini: ${String(error)}`);
   }
   return schema.parse(parsed);
 }
@@ -107,7 +137,7 @@ FORMATO JSON
 }`;
 
   const user = `CANDIDATOS DA SEMANA\n${clusterContext(clusters)}\n\nAPRENDIZADO DO PERFIL\n${historicalGuidance || "Ainda não há histórico suficiente; priorize clareza, novidade, utilidade e potencial de compartilhamento."}`;
-  const generated = await callGroqJson<GeneratedPost>(
+  const generated = await callGeminiJson<GeneratedPost>(
     [
       { role: "system", content: system },
       { role: "user", content: user }
@@ -122,7 +152,7 @@ FORMATO JSON
 }
 
 export async function factualReview(post: GeneratedPost, evidence: StoryCluster[]): Promise<ReviewResult> {
-  return callGroqJson<ReviewResult>(
+  return callGeminiJson<ReviewResult>(
     [
       {
         role: "system",
@@ -138,7 +168,7 @@ export async function factualReview(post: GeneratedPost, evidence: StoryCluster[
 }
 
 export async function editorialReview(post: GeneratedPost, historicalGuidance: string): Promise<ReviewResult> {
-  return callGroqJson<ReviewResult>(
+  return callGeminiJson<ReviewResult>(
     [
       {
         role: "system",
@@ -177,7 +207,7 @@ export async function repairPost(
   reviews: ReviewResult[],
   evidence: StoryCluster[]
 ): Promise<GeneratedPost> {
-  return callGroqJson<GeneratedPost>(
+  return callGeminiJson<GeneratedPost>(
     [
       {
         role: "system",

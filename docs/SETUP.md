@@ -3,13 +3,32 @@
 ## 1. Supabase
 
 1. Crie um projeto gratuito.
-2. Abra o SQL Editor e execute `supabase/migrations/202608050001_initial.sql`.
+2. Abra o SQL Editor, abra o arquivo `supabase/migrations/202608050001_initial.sql`, copie todo o conteúdo SQL e execute-o. Não cole apenas o caminho do arquivo.
 3. Em **Authentication → Providers → Email**, desative o cadastro público.
-4. Em **Authentication → URL Configuration**, defina a URL pública do app e adicione `/auth/callback` aos redirects permitidos.
+4. Em **Authentication → URL Configuration**, defina a URL pública do app e adicione estes redirects permitidos:
+
+```text
+https://SEU-DOMINIO/auth/callback
+https://SEU-DOMINIO/auth/accept
+```
+
 5. Crie o primeiro administrador no Dashboard com **Add user → Send invitation**.
-6. Copie a URL, a chave pública e a chave secreta do projeto para as variáveis de ambiente.
+6. Abra o link recebido por e-mail, aguarde a validação e defina a senha na tela `/auth/accept`.
+7. Copie a URL, a chave pública e a chave secreta do projeto para as variáveis de ambiente.
 
 A chave secreta substitui a antiga `service_role` nos projetos novos. Nunca use essa chave em variáveis `NEXT_PUBLIC_*`.
+
+Convites enviados por versões anteriores da aplicação apontavam para `/auth/callback` e podem voltar à tela de login sem permitir criar uma senha. Depois de atualizar a aplicação, remova o usuário ainda não ativado no Supabase e envie um novo convite.
+
+### Opção de template SSR
+
+O fluxo padrão funciona pela página cliente `/auth/accept`. Caso você personalize o template de convite para usar token hash no servidor, use um link como:
+
+```html
+<a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=invite&next=/auth/accept">
+  Aceitar convite
+</a>
+```
 
 ## 2. Meta / Instagram
 
@@ -33,16 +52,16 @@ instagram_business_content_publish
 
 A conta precisa ser profissional, Business ou Creator. O fluxo com Instagram Login não exige uma Página do Facebook vinculada.
 
-## 3. Groq
+## 3. Gemini
 
-Crie uma chave gratuita e informe:
+Crie uma chave gratuita no Google AI Studio e informe:
 
 ```text
-GROQ_API_KEY=...
-GROQ_MODEL=...
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
-O modelo deve aceitar respostas JSON no endpoint compatível com OpenAI. O nome fica configurável porque a disponibilidade dos modelos gratuitos muda.
+O sistema usa saída estruturada em JSON e valida cada resposta novamente com Zod. O modelo permanece configurável porque a disponibilidade e os limites da camada gratuita podem mudar.
 
 ## 4. Segredos
 
@@ -78,15 +97,17 @@ Abra `http://localhost:3000`.
 
 ## 7. Primeiro teste
 
-1. Conecte o Instagram em **Configurações**.
-2. Use **Coletar agora**.
-3. Abra **Publicações → Gerar semana**.
-4. Confirme que o status ficou `approved` e abra a capa renderizada.
-5. Para evitar uma publicação acidental, mantenha `auto_publish` desativado até concluir o teste.
-6. Ative a publicação automática e configure o dia e a hora desejados.
+1. Aceite um convite novo e defina a senha.
+2. Conecte o Instagram em **Configurações**.
+3. Use **Coletar agora**.
+4. Abra **Publicações → Gerar semana**.
+5. Confirme que o status ficou `approved` e abra a capa renderizada.
+6. Para evitar uma publicação acidental, mantenha `auto_publish` desativado até concluir o teste.
+7. Ative a publicação automática e configure o dia e a hora desejados.
 
 ## Limitações do MVP
 
 - A similaridade inicial de títulos é lexical; a revisão por IA reduz agrupamentos inadequados. Embeddings podem ser adicionados quando o volume justificar.
 - A renderização usa fontes seguras do sistema. A fonte proprietária Canela não é distribuída pelo repositório; o estilo editorial é preservado com fallback serifado.
 - A Meta pode exigir App Review antes de conectar contas que não sejam administradoras/testadoras do aplicativo.
+- A camada gratuita do Gemini possui limites e pode usar os dados enviados para melhorar os produtos do Google; não envie conteúdo confidencial para esse fluxo.

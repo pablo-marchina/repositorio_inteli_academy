@@ -19,7 +19,7 @@ Deduplicação por URL e agrupamento por acontecimento
 Ranking inicial + modelo aprendido do perfil
         │
         ▼
-Roteiro e legenda por LLM
+Roteiro e legenda pelo Gemini com saída estruturada
         │
         ├── revisão factual
         ├── revisão editorial/engajamento
@@ -41,13 +41,17 @@ Instagram API com Instagram Login
 Insights → atualização dos pesos do ranking
 ```
 
+## Autenticação por convite
+
+O Supabase envia o convite para `/auth/accept`. A página cliente aceita tanto a sessão recebida no fragmento da URL quanto código PKCE ou token hash, cria a sessão e exige a definição de senha antes de liberar o painel. O callback do servidor continua disponível para templates SSR personalizados.
+
 ## Segurança
 
 - Não existe cadastro público; os usuários entram somente por convite do Supabase Admin API.
 - Todos os usuários autenticados são administradores, conforme o requisito atual.
 - O token do Instagram é criptografado com AES-256-GCM antes de ser persistido.
 - As imagens públicas usadas pela API do Instagram exigem assinatura HMAC por post e posição.
-- `SUPABASE_SECRET_KEY`, `META_APP_SECRET`, `APP_ENCRYPTION_KEY` e `CRON_SECRET` nunca chegam ao navegador.
+- `SUPABASE_SECRET_KEY`, `GEMINI_API_KEY`, `META_APP_SECRET`, `APP_ENCRYPTION_KEY` e `CRON_SECRET` nunca chegam ao navegador.
 - RLS está habilitado em todas as tabelas e permite acesso somente ao papel `authenticated`; processos automáticos usam a chave secreta no servidor.
 
 ## Aprendizado
@@ -61,7 +65,7 @@ O MVP usa um modelo linear simples e auditável. Com mais dados, ele pode ser su
 - Frontend/API: Vercel Hobby ou Cloudflare compatível com Next.js.
 - Banco/Auth: Supabase Free.
 - Agendamento: GitHub Actions do repositório público.
-- Texto: camada gratuita da Groq.
+- Texto: camada gratuita do Google Gemini API, com modelo configurável.
 - Renderização: `ImageResponse` do próprio Next.js.
 - Publicação e métricas: API oficial da Meta.
 

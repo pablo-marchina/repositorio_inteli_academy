@@ -8,7 +8,7 @@ Aplicação web multiusuário que pesquisa os assuntos de inteligência artifici
 
 O repositório começou como quatro workflows de n8n para coleta, síntese, Slack e alertas. Esses arquivos continuam na raiz como referência histórica. A aplicação principal agora é um produto Next.js com:
 
-- autenticação por convite e acesso administrativo;
+- autenticação por convite, tela de aceitação e definição de senha;
 - painel compartilhado para várias pessoas;
 - coleta gratuita por RSS, arXiv e Hacker News;
 - agrupamento de matérias sobre o mesmo acontecimento;
@@ -31,7 +31,7 @@ O repositório começou como quatro workflows de n8n para coleta, síntese, Slac
 |---|---|
 | Aplicação | Next.js 16 + React 19 |
 | Banco e autenticação | Supabase |
-| Modelo de linguagem | Groq, modelo configurável |
+| Modelo de linguagem | Google Gemini, modelo configurável |
 | Renderização | Next.js `ImageResponse` |
 | Publicação e métricas | Instagram API with Instagram Login |
 | Agendamento | GitHub Actions |
@@ -74,6 +74,7 @@ Workflow *.json            protótipo n8n preservado
 
 - cadastro público desativado;
 - usuários somente por convite;
+- aceitação do convite antes da criação da senha;
 - tokens do Instagram criptografados com AES-256-GCM;
 - imagens assinadas por HMAC;
 - segredos restritos ao servidor;
