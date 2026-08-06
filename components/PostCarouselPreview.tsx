@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import styles from "@/components/PostCarouselPreview.module.css";
 
 type PreviewSlide = {
   position: number;
@@ -29,8 +30,12 @@ export function PostCarouselPreview({ title, slides }: { title: string; slides: 
 
     function handleKeydown(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
-      if (event.key === "ArrowLeft") previous();
-      if (event.key === "ArrowRight") next();
+      if (event.key === "ArrowLeft") {
+        setIndex((value) => (value - 1 + slides.length) % slides.length);
+      }
+      if (event.key === "ArrowRight") {
+        setIndex((value) => (value + 1) % slides.length);
+      }
     }
 
     window.addEventListener("keydown", handleKeydown);
@@ -57,56 +62,56 @@ export function PostCarouselPreview({ title, slides }: { title: string; slides: 
 
       {open && current ? (
         <div
-          className="carousel-modal-backdrop"
+          className={styles.backdrop}
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setOpen(false);
           }}
         >
           <section
-            className="carousel-modal"
+            className={styles.modal}
             role="dialog"
             aria-modal="true"
             aria-label={`Prévia do carrossel: ${title}`}
           >
-            <header className="carousel-modal-header">
+            <header className={styles.header}>
               <div>
                 <span className="eyebrow">Prévia completa</span>
                 <h2>{title}</h2>
               </div>
-              <button className="carousel-icon-button" type="button" onClick={() => setOpen(false)} aria-label="Fechar prévia">
+              <button className={styles.close} type="button" onClick={() => setOpen(false)} aria-label="Fechar prévia">
                 ×
               </button>
             </header>
 
-            <div className="carousel-stage">
+            <div className={styles.stage}>
               {slides.length > 1 ? (
-                <button className="carousel-arrow previous" type="button" onClick={previous} aria-label="Slide anterior">
+                <button className={styles.arrow} type="button" onClick={previous} aria-label="Slide anterior">
                   ‹
                 </button>
-              ) : null}
+              ) : <span />}
 
-              <div className="carousel-image-frame">
+              <div className={styles.frame}>
                 <Image
                   key={current.url}
                   src={current.url}
                   alt={`Slide ${index + 1} de ${slides.length}: ${title}`}
                   width={1080}
                   height={1350}
-                  sizes="(max-width: 760px) 92vw, 62vw"
+                  sizes="(max-width: 760px) 78vw, 650px"
                   priority
                   unoptimized
                 />
               </div>
 
               {slides.length > 1 ? (
-                <button className="carousel-arrow next" type="button" onClick={next} aria-label="Próximo slide">
+                <button className={styles.arrow} type="button" onClick={next} aria-label="Próximo slide">
                   ›
                 </button>
-              ) : null}
+              ) : <span />}
             </div>
 
-            <div className="carousel-toolbar">
+            <div className={styles.toolbar}>
               <strong>Slide {index + 1} de {slides.length}</strong>
               <span>Use as setas do teclado para navegar.</span>
               <a className="button secondary" href={current.url} target="_blank" rel="noreferrer">
@@ -114,10 +119,10 @@ export function PostCarouselPreview({ title, slides }: { title: string; slides: 
               </a>
             </div>
 
-            <div className="carousel-thumbnails" aria-label="Selecionar slide">
+            <div className={styles.thumbnails} aria-label="Selecionar slide">
               {slides.map((slide, slideIndex) => (
                 <button
-                  className={`carousel-thumbnail${slideIndex === index ? " active" : ""}`}
+                  className={`${styles.thumbnail} ${slideIndex === index ? styles.active : ""}`}
                   type="button"
                   key={slide.position}
                   onClick={() => setIndex(slideIndex)}
