@@ -177,7 +177,6 @@ export async function generateManualStage(articleIds: string[]) {
     if (existing?.status === "published" || existing?.status === "publishing") {
       throw new Error("A publicação desta semana já foi publicada e não pode ser substituída.");
     }
-    if (existing) await admin.from("posts").delete().eq("id", existing.id);
 
     const { data, error } = await admin
       .from("articles")
@@ -221,6 +220,12 @@ export async function generateManualStage(articleIds: string[]) {
       sourceName: article.source_name,
       sourceUrl: article.canonical_url
     }));
+
+    if (existing) {
+      const { error: deleteError } = await admin.from("posts").delete().eq("id", existing.id);
+      if (deleteError) throw deleteError;
+    }
+
     const { data: inserted, error: postError } = await admin
       .from("posts")
       .insert({
