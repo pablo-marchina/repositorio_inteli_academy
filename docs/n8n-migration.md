@@ -25,6 +25,7 @@ GitHub Actions
 → coleta concorrente com falhas isoladas
 → normalização e deduplicação
 → pré-filtro objetivo
+→ seleção dos 60 candidatos mais fortes
 → classificação de relevância e categoria pelo Gemini
 → corte mínimo de relevância
 → Supabase
@@ -42,6 +43,8 @@ O pré-filtro antes do Gemini considera:
 - pontos, comentários e menções disponíveis;
 - penalização de itens promocionais ou operacionais, como vagas e inscrições em eventos.
 
+Todos os feeds são consultados, mas somente os 60 candidatos com maior prioridade objetiva são enviados ao modelo por execução. Isso reduz tokens sem reduzir a cobertura de fontes.
+
 O classificador retorna somente:
 
 ```text
@@ -55,6 +58,8 @@ Sentimento e oportunidade de startup não fazem parte do produto.
 ## Workflow 2 — Sintetizador semanal
 
 Não foi migrado. A aplicação é orientada à criação do post semanal, não à produção de um relatório paralelo. Os melhores artigos e clusters alimentam diretamente a geração do carrossel.
+
+As fontes são mantidas nas evidências internas, na revisão factual e na legenda. Não existe obrigação de criar um slide de fontes no carrossel.
 
 ## Workflow 3 — Chatbot Slack
 
@@ -81,7 +86,7 @@ Nenhuma migration adicional é necessária para essa camada: a classificação �
 
 ```text
 gemini-3.5-flash-lite
-→ classificação em alto volume
+→ classificação dos 60 candidatos mais fortes
 
 gemini-3.6-flash
 → roteiro, legenda, composição visual, fact-checking,
