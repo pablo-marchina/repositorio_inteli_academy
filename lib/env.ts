@@ -24,7 +24,7 @@ const serverSchema = z.object({
     .string()
     .url()
     .default("https://raw.githubusercontent.com/foorilla/allainews_sources/refs/heads/main/README.md"),
-  MAX_ARTICLES_TO_CLASSIFY: z.coerce.number().int().min(0).max(400).default(180),
+  MAX_ARTICLES_TO_CLASSIFY: z.coerce.number().int().min(0).max(200).default(60),
   MIN_ARTICLE_RELEVANCE: z.coerce.number().min(1).max(10).default(5.5)
 });
 
