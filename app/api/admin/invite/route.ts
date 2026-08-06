@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     const { email } = schema.parse(await request.json());
     const { error } = await createAdminClient().auth.admin.inviteUserByEmail(email, {
       data: { role: "admin" },
-      redirectTo: `${env().NEXT_PUBLIC_APP_URL}/auth/callback`
+      redirectTo: `${env().NEXT_PUBLIC_APP_URL}/auth/accept`
     });
     if (error) throw error;
     return Response.json({ ok: true });
