@@ -2,15 +2,11 @@ import { ArticleSelector } from "@/components/ArticleSelector";
 import { RunPipelineButton } from "@/components/RunPipelineButton";
 import { requireAdmin } from "@/lib/auth";
 
-const DAY = 86_400_000;
-
 export default async function ArticlesPage() {
   const { supabase } = await requireAdmin();
-  const since = new Date(Date.now() - 14 * DAY).toISOString();
   const { data: articles } = await supabase
     .from("articles")
     .select("id,title,summary,canonical_url,source_name,source_quality,content_type,published_at,popularity")
-    .gte("published_at", since)
     .order("published_at", { ascending: false })
     .limit(240);
 
@@ -57,7 +53,7 @@ export default async function ArticlesPage() {
         <ArticleSelector articles={options} />
       ) : (
         <article className="card empty">
-          Nenhum artigo recente foi coletado. Clique em Atualizar coleta e tente novamente.
+          Nenhum artigo foi coletado. Clique em Atualizar coleta e tente novamente.
         </article>
       )}
     </>
