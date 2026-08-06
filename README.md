@@ -36,21 +36,24 @@ A aplicação separa tarefas de volume e tarefas editoriais:
 
 O modelo de filtragem recebe apenas título, resumo, fonte, URL e data. Ele retorna nota de relevância, categoria e justificativa curta. Não gera sentimento, oportunidades de startup, relatórios ou respostas gerais sobre a base.
 
+Para controlar o consumo de tokens, somente os 60 candidatos mais fortes após o pré-filtro são enviados ao Gemini por execução. Todos os feeds continuam sendo consultados; o limite se aplica apenas à classificação por IA.
+
 ## Identidade visual dos posts
 
-O sistema visual dos carrosséis usa:
+O sistema visual dos carrosséis toma como referências:
 
 - azul elétrico `#2A00FF`, branco, carvão `#272727` e cinza muito claro;
 - grandes títulos e numerais editoriais;
-- mistura controlada de tipografia grotesca com serif editorial;
+- combinação de tipografia grotesca com serif editorial;
 - grids assimétricos, espaço negativo e blocos sólidos;
 - monograma `IA`;
 - cards arredondados, linhas finas e motivos geométricos;
 - composições de capa, pôster, módulos, divisão, pilha e lista;
-- brackets, órbitas, grids técnicos, faixas e molduras;
-- ausência de gradientes e clichês visuais genéricos de IA.
+- brackets, órbitas, grids técnicos, faixas e molduras.
 
-A validação exige capa, narrativa, penúltimo slide de fontes, último slide de CTA, variedade de composição e limites estritos de texto.
+Esses elementos orientam a direção de arte sem funcionar como uma lista de recursos obrigatórios ou proibidos. A validação técnica exige apenas capa inicial, CTA final, posições consistentes e limites de densidade de texto.
+
+As fontes permanecem em `factualClaims`, na revisão factual e na legenda. O carrossel não precisa ter um slide exclusivo de fontes.
 
 ## Pipeline
 
@@ -59,6 +62,7 @@ catálogo completo de feeds + fontes fixas + Hacker News
 → coleta concorrente com tolerância a falhas
 → normalização e deduplicação
 → pré-filtro objetivo
+→ seleção dos 60 candidatos mais fortes
 → classificação de relevância em lotes
 → corte por nota mínima
 → agrupamento por acontecimento
@@ -108,7 +112,7 @@ Consulte [`docs/SETUP.md`](docs/SETUP.md), [`docs/ARCHITECTURE.md`](docs/ARCHITE
 - validação e timeout para feeds externos;
 - bloqueio básico de endereços locais e privados;
 - limite de três tentativas de publicação;
-- nenhuma publicação sem fontes, conta conectada ou aprovação integral.
+- nenhuma publicação sem evidências, conta conectada ou aprovação integral.
 
 ## Comandos
 
