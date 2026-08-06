@@ -1,3 +1,4 @@
+import { PostCarouselPreview } from "@/components/PostCarouselPreview";
 import { RunPipelineButton } from "@/components/RunPipelineButton";
 import { requireAdmin } from "@/lib/auth";
 import { signPublicAsset } from "@/lib/crypto";
@@ -12,7 +13,7 @@ export default async function PostsPage() {
   const { supabase } = await requireAdmin();
   const { data: posts } = await supabase
     .from("posts")
-    .select("id,title,caption,status,scheduled_for,published_at,last_error,post_slides(position,content)")
+    .select("id,title,caption,status,scheduled_for,published_at,last_error,post_slides(position)")
     .order("created_at", { ascending: false })
     .limit(30);
 
@@ -31,9 +32,26 @@ export default async function PostsPage() {
       </header>
 
       <section className="grid two">
-        {(posts ?? []).map((post: { id: string; title: string; caption: string; status: string; scheduled_for: string | null; published_at: string | null; last_error: string | null; post_slides: Array<{ position: number; content: unknown }> | null }) => {
-          const first = [...(post.post_slides ?? [])].sort((a, b) => a.position - b.position)[0];
-          const sig = first ? signPublicAsset(`${post.id}:${first.position}`) : "";
+        {(posts ?? []).map((post: {
+          id: string;
+          title: string;
+          caption: string;
+          status: string;
+          scheduled_for: string | null;
+          published_at: string | null;
+          last_error: string | null;
+          post_slides: Array<{ position: number }> | null;
+        }) => {
+          const slides = [...(post.post_slides ?? [])]
+            .sort((a, b) => a.position - b.position)
+            .map((slide) => {
+              const signature = signPublicAsset(`${post.id}:${slide.position}`);
+              return {
+                position: slide.position,
+                url: `/api/render/${post.id}/${slide.position}?sig=${encodeURIComponent(signature)}`
+              };
+            });
+
           return (
             <article className="card post-card" key={post.id}>
               <div className="post-cover">
@@ -43,12 +61,16 @@ export default async function PostsPage() {
               <div className="post-details">
                 <div className="post-meta">
                   <span className={statusClass(post.status)}>{post.status}</span>
-                  <span className="badge">{post.post_slides?.length ?? 0} slides</span>
+                  <span className="badge">{slides.length} slides</span>
                   {post.scheduled_for ? <span className="badge">{new Date(post.scheduled_for).toLocaleString("pt-BR")}</span> : null}
                 </div>
                 <p>{post.caption.slice(0, 220)}{post.caption.length > 220 ? "…" : ""}</p>
                 {post.last_error ? <p className="feedback error">{post.last_error}</p> : null}
-                {first ? <div className="post-actions"><a className="button secondary" target="_blank" rel="noreferrer" href={`/api/render/${post.id}/${first.position}?sig=${encodeURIComponent(sig)}`}>Ver capa renderizada</a></div> : null}
+                {slides.length ? (
+                  <div className="post-actions">
+                    <PostCarouselPreview title={post.title} slides={slides} />
+                  </div>
+                ) : null}
               </div>
             </article>
           );
