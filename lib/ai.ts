@@ -130,7 +130,7 @@ function clusterContext(clusters: StoryCluster[]) {
 }
 
 export async function generateEditorialPost(clusters: StoryCluster[], historicalGuidance: string) {
-  const system = `Você é o diretor editorial e de arte do Instagram da Inteli Academy. Crie um carrossel brasileiro de IA com alta precisão factual, forte narrativa e fidelidade rigorosa à identidade visual. Retorne somente JSON válido.
+  const system = `Você é o diretor editorial e de arte do Instagram da Inteli Academy. Crie um carrossel brasileiro de IA com alta precisão factual, forte narrativa e alta fidelidade à identidade visual. Retorne somente JSON válido.
 
 OBJETIVO EDITORIAL
 - Escolha de 3 a 5 acontecimentos com maior utilidade, novidade e potencial de compartilhamento ou salvamento.
@@ -139,26 +139,25 @@ OBJETIVO EDITORIAL
 - Não invente números, citações, datas, causalidade ou conclusões.
 - Toda afirmação factual deve aparecer em factualClaims com uma URL fornecida nas evidências.
 - A capa deve prometer um benefício ou aprendizado concreto, nunca apenas “notícias da semana”.
-- A legenda deve incluir contexto, uma chamada para salvar/compartilhar e uma seção curta “Fontes”.
+- A legenda deve incluir contexto, uma chamada para salvar ou compartilhar e uma seção curta de fontes.
+- As fontes devem ficar na legenda e em factualClaims; não é necessário criar slide exclusivo de fontes.
 
-SISTEMA VISUAL INTELI ACADEMY
-- Paleta estrita: azul elétrico ${brand.colors.blue}, branco, carvão ${brand.colors.black} e cinza muito claro ${brand.colors.soft}. Não use gradientes, neon ou outras cores.
-- Tipografia: grotesca geométrica e direta para informação; serif editorial de alto contraste apenas em capas, palavras-chave e números de destaque.
-- Composição: grids editoriais assimétricos, margens generosas, títulos muito grandes, numerais editoriais, blocos sólidos, linhas finas, cantos arredondados e o monograma IA.
-- Elementos recorrentes permitidos: brackets de canto, órbitas circulares, grid técnico discreto, faixa sólida, moldura editorial e cards modulares.
-- Não use estética genérica de IA: robôs, cérebros, circuitos, estrelas, brilhos, hologramas, emojis ou ícones aleatórios.
-- Um conceito principal por slide. Prefira espaço negativo a preencher a tela.
+REFERÊNCIAS VISUAIS INTELI ACADEMY
+- Tome como base o azul elétrico ${brand.colors.blue}, branco, carvão ${brand.colors.black} e cinza muito claro ${brand.colors.soft}.
+- Use tipografia grotesca geométrica e direta para informação e serif editorial de alto contraste quando ela fortalecer a hierarquia.
+- Explore grids editoriais assimétricos, margens generosas, títulos muito grandes, numerais editoriais, blocos sólidos, linhas finas, cantos arredondados e o monograma IA.
+- Brackets de canto, órbitas circulares, grid técnico, faixas, molduras e cards modulares são referências disponíveis, não uma lista fechada.
+- Use liberdade criativa para combinar recursos visuais quando isso melhorar clareza, impacto e coerência com a marca.
+- Um conceito principal por slide e uma hierarquia visual clara são preferíveis a excesso de informação.
 - Use entre ${brand.visualRules.minSlides} e ${brand.visualRules.maxSlides} slides.
-- Ordem obrigatória: capa; desenvolvimento narrativo; penúltimo slide de fontes; último slide de CTA.
-- Varie composição e motivo. Não repita a mesma composição em mais de dois slides consecutivos.
-- Alterne fundos azul, branco e carvão; nunca use mais de dois fundos escuros consecutivos.
+- A sequência deve começar com capa, desenvolver a narrativa e terminar com CTA.
 - O campo highlight, quando usado, deve ser uma palavra ou frase que exista literalmente no title.
 
 DENSIDADE
 - Título ideal: 3 a 9 palavras e no máximo ${brand.visualRules.maxTitleCharacters} caracteres.
 - Corpo: no máximo ${brand.visualRules.maxBodyCharacters} caracteres e preferencialmente até 42 palavras.
 - No máximo ${brand.visualRules.maxBullets} bullets por slide.
-- Cards devem conter frases curtas; o slide de fontes deve usar nomes de fontes ou domínios, não URLs longas.
+- Cards devem conter frases curtas e escaneáveis.
 
 FORMATO JSON
 {
@@ -205,7 +204,7 @@ export async function factualReview(post: GeneratedPost, evidence: StoryCluster[
     [
       {
         role: "system",
-        content: `Você é um fact-checker independente. Compare TODAS as afirmações do post com as evidências fornecidas. Reprove se houver afirmação sem fonte compatível, exagero causal, número não sustentado, citação inventada ou URL que não esteja nas evidências. Retorne somente JSON: {"passed":boolean,"score":0-100,"issues":[],"corrections":[]}. Exija score >= 92 para passed=true.`
+        content: `Você é um fact-checker independente. Compare TODAS as afirmações do post com as evidências fornecidas. Reprove se houver afirmação sem fonte compatível, exagero causal, número não sustentado, citação inventada ou URL que não esteja nas evidências. As fontes podem ficar somente na legenda e em factualClaims; não exija slide de fontes. Retorne somente JSON: {"passed":boolean,"score":0-100,"issues":[],"corrections":[]}. Exija score >= 92 para passed=true.`
       },
       {
         role: "user",
@@ -222,7 +221,7 @@ export async function editorialReview(post: GeneratedPost, historicalGuidance: s
     [
       {
         role: "system",
-        content: `Você é um revisor editorial e diretor de arte da Inteli Academy. Avalie clareza, força da capa, progressão narrativa, densidade, utilidade, potencial de compartilhamento/salvamento e ausência de clickbait. Também avalie fidelidade visual: paleta azul/branco/carvão, títulos grandes, mistura controlada de sans e serif, grids assimétricos, espaço negativo, monograma IA, cards arredondados e motivos geométricos; reprove estética genérica de IA, gradientes, emojis, excesso de texto ou repetição de layout. Retorne somente JSON: {"passed":boolean,"score":0-100,"issues":[],"corrections":[]}. Exija score >= 90 para passed=true.`
+        content: `Você é um revisor editorial e diretor de arte da Inteli Academy. Avalie clareza, força da capa, progressão narrativa, densidade, utilidade, potencial de compartilhamento e salvamento, ausência de clickbait e coerência geral com a identidade da marca. Considere paleta, tipografia, grids, espaço negativo, monograma IA, cards e motivos geométricos como referências, sem tratar nenhum recurso visual isolado como proibido ou como motivo automático de reprovação. Não exija slide de fontes. Retorne somente JSON: {"passed":boolean,"score":0-100,"issues":[],"corrections":[]}. Exija score >= 90 para passed=true.`
       },
       {
         role: "user",
@@ -238,40 +237,21 @@ export function programmaticReview(post: GeneratedPost): ReviewResult {
   const issues: string[] = [];
   const positions = post.slides.map((slide) => slide.position);
   const last = post.slides[post.slides.length - 1];
-  const penultimate = post.slides[post.slides.length - 2];
 
   if (post.slides.length < brand.visualRules.minSlides || post.slides.length > brand.visualRules.maxSlides) {
     issues.push(`Quantidade de slides deve ficar entre ${brand.visualRules.minSlides} e ${brand.visualRules.maxSlides}.`);
   }
   if (!post.slides[0] || post.slides[0].layout !== "cover") issues.push("O primeiro slide deve ser uma capa.");
-  if (!penultimate || penultimate.layout !== "sources") issues.push("O penúltimo slide deve ser o slide de fontes.");
   if (!last || last.layout !== "cta") issues.push("O último slide deve ser o CTA.");
   if (new Set(positions).size !== positions.length) issues.push("Há posições de slides duplicadas.");
 
-  const compositions = new Set(post.slides.map((slide) => slide.composition));
-  if (compositions.size < 3) issues.push("Use pelo menos três composições visuais diferentes.");
-  if (post.slides[0]?.titleStyle === "sans") issues.push("A capa deve usar tipografia serif ou mista.");
-
-  let repeatedAccent = 1;
-  let repeatedComposition = 1;
-  for (let index = 0; index < post.slides.length; index += 1) {
-    const slide = post.slides[index];
-    const previous = post.slides[index - 1];
+  for (const slide of post.slides) {
     if (slide.title.length > brand.visualRules.maxTitleCharacters) issues.push(`Título longo no slide ${slide.position}.`);
     if ((slide.body?.length ?? 0) > brand.visualRules.maxBodyCharacters) issues.push(`Texto longo no slide ${slide.position}.`);
     if ((slide.bullets?.length ?? 0) > brand.visualRules.maxBullets) issues.push(`Bullets em excesso no slide ${slide.position}.`);
     if (slide.highlight && !slide.title.toLocaleLowerCase("pt-BR").includes(slide.highlight.toLocaleLowerCase("pt-BR"))) {
       issues.push(`O destaque do slide ${slide.position} não está contido no título.`);
     }
-    if (previous) {
-      repeatedAccent = previous.accent === slide.accent ? repeatedAccent + 1 : 1;
-      repeatedComposition = previous.composition === slide.composition ? repeatedComposition + 1 : 1;
-      if (repeatedAccent > 2 && slide.accent !== "white") issues.push(`Há mais de dois fundos escuros consecutivos no slide ${slide.position}.`);
-      if (repeatedComposition > 2) issues.push(`A composição se repete mais de duas vezes até o slide ${slide.position}.`);
-    }
-  }
-  if ((penultimate?.sourceLabels?.length ?? penultimate?.bullets?.length ?? 0) < 3) {
-    issues.push("O slide de fontes deve listar pelo menos três referências.");
   }
   if (post.factualClaims.some((claim) => !claim.sourceUrl.startsWith("https://"))) issues.push("Toda fonte deve usar HTTPS.");
   const score = Math.max(0, 100 - issues.length * 12);
@@ -287,7 +267,7 @@ export async function repairPost(
     [
       {
         role: "system",
-        content: `Você é um editor corretor e diretor de arte. Corrija o post usando somente as evidências e resolva todos os problemas apontados. Preserve os pontos fortes, a ordem capa → narrativa → fontes → CTA e a identidade Inteli Academy. Retorne somente o mesmo formato JSON do post original.`
+        content: `Você é um editor corretor e diretor de arte. Corrija o post usando somente as evidências e resolva todos os problemas apontados. Preserve os pontos fortes, a sequência capa → narrativa → CTA e a identidade Inteli Academy. Mantenha as fontes na legenda e em factualClaims, sem exigir slide de fontes. Retorne somente o mesmo formato JSON do post original.`
       },
       {
         role: "user",
