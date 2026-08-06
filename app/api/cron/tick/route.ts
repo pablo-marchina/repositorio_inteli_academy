@@ -1,7 +1,7 @@
 export const maxDuration = 300;
 
+import { enhancedCronTick } from "@/lib/enhanced-pipeline";
 import { env } from "@/lib/env";
-import { cronTick } from "@/lib/pipeline";
 
 function authorized(request: Request) {
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
@@ -11,7 +11,7 @@ function authorized(request: Request) {
 export async function POST(request: Request) {
   if (!authorized(request)) return Response.json({ error: "Não autorizado." }, { status: 401 });
   try {
-    return Response.json({ result: await cronTick() });
+    return Response.json({ result: await enhancedCronTick() });
   } catch (error) {
     return Response.json({ error: String(error) }, { status: 500 });
   }

@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 
-export function RunPipelineButton({ stage, label }: { stage: "collect" | "generate" | "publish" | "metrics"; label: string }) {
+export function RunPipelineButton({
+  stage,
+  label
+}: {
+  stage: "collect" | "generate" | "publish" | "metrics";
+  label: string;
+}) {
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
 

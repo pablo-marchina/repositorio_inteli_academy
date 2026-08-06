@@ -2,8 +2,9 @@ export const maxDuration = 300;
 
 import { z } from "zod";
 import { apiAdmin } from "@/lib/api-auth";
+import { enhancedCollectStage } from "@/lib/enhanced-pipeline";
 import { generateManualStage } from "@/lib/manual-generation";
-import { collectStage, generateStage, publishStage, syncMetricsStage } from "@/lib/pipeline";
+import { generateStage, publishStage, syncMetricsStage } from "@/lib/pipeline";
 
 const schema = z
   .object({
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
   try {
     const { stage, articleIds } = schema.parse(await request.json());
     const result =
-      stage === "collect" ? await collectStage() :
+      stage === "collect" ? await enhancedCollectStage() :
       stage === "generate" && articleIds ? await generateManualStage(articleIds) :
       stage === "generate" ? await generateStage(true) :
       stage === "publish" ? await publishStage() :

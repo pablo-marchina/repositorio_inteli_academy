@@ -4,6 +4,12 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import styles from "@/components/ArticleSelector.module.css";
 
+type ArticleInsight = {
+  relevanceScore: number;
+  category: string;
+  rationale: string;
+};
+
 type ArticleOption = {
   id: string;
   title: string;
@@ -18,16 +24,22 @@ type ArticleOption = {
     comments: number;
     mentions: number;
   };
+  insight: ArticleInsight | null;
 };
 
 const MIN_ARTICLES = 3;
 const MAX_ARTICLES = 12;
+
+function popularityScore(article: ArticleOption) {
+  return article.popularity.points + article.popularity.comments * 1.5 + article.popularity.mentions * 3;
+}
 
 export function ArticleSelector({ articles }: { articles: ArticleOption[] }) {
   const router = useRouter();
   const [selected, setSelected] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [contentType, setContentType] = useState("all");
+  const [sort, setSort] = useState("relevance");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -38,16 +50,22 @@ export function ArticleSelector({ articles }: { articles: ArticleOption[] }) {
 
   const filtered = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase("pt-BR");
-    return articles.filter((article) => {
+    const result = articles.filter((article) => {
       const matchesType = contentType === "all" || article.contentType === contentType;
       const matchesSearch =
         !normalizedSearch ||
-        `${article.title} ${article.summary} ${article.sourceName}`
+        `${article.title} ${article.summary} ${article.sourceName} ${article.insight?.category ?? ""}`
           .toLocaleLowerCase("pt-BR")
           .includes(normalizedSearch);
       return matchesType && matchesSearch;
     });
-  }, [articles, contentType, search]);
+    return [...result].sort((a, b) => {
+      if (sort === "newest") return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+      if (sort === "quality") return b.sourceQuality - a.sourceQuality;
+      if (sort === "popularity") return popularityScore(b) - popularityScore(a);
+      return (b.insight?.relevanceScore ?? 0) - (a.insight?.relevanceScore ?? 0);
+    });
+  }, [articles, contentType, search, sort]);
 
   function toggle(articleId: string) {
     setMessage("");
@@ -62,13 +80,15 @@ export function ArticleSelector({ articles }: { articles: ArticleOption[] }) {
   }
 
   function selectVisible() {
-    const visibleIds = filtered.map((article) => article.id);
-    setSelected((current) => [...new Set([...current, ...visibleIds])].slice(0, MAX_ARTICLES));
-    setMessage(
-      visibleIds.length + selected.length > MAX_ARTICLES
-        ? `Foram selecionados os primeiros ${MAX_ARTICLES} artigos disponíveis.`
-        : ""
-    );
+    setSelected((current) => {
+      const merged = [...new Set([...current, ...filtered.map((article) => article.id)])];
+      if (merged.length > MAX_ARTICLES) {
+        setMessage(`Foram selecionados os primeiros ${MAX_ARTICLES} artigos disponíveis.`);
+      } else {
+        setMessage("");
+      }
+      return merged.slice(0, MAX_ARTICLES);
+    });
   }
 
   async function generate() {
@@ -102,7 +122,7 @@ export function ArticleSelector({ articles }: { articles: ArticleOption[] }) {
             id="article-search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Título, assunto ou fonte"
+            placeholder="Título, assunto, categoria ou fonte"
           />
         </div>
         <div className="field">
@@ -112,17 +132,28 @@ export function ArticleSelector({ articles }: { articles: ArticleOption[] }) {
             {contentTypes.map((type) => <option value={type} key={type}>{type}</option>)}
           </select>
         </div>
-        <button className="button secondary" type="button" onClick={selectVisible} disabled={!filtered.length}>
-          Selecionar visíveis
-        </button>
-        <button className="button secondary" type="button" onClick={() => setSelected([])} disabled={!selected.length}>
-          Limpar seleção
-        </button>
+        <div className="field">
+          <label htmlFor="article-sort">Ordenar por</label>
+          <select id="article-sort" value={sort} onChange={(event) => setSort(event.target.value)}>
+            <option value="relevance">Relevância editorial</option>
+            <option value="newest">Mais recentes</option>
+            <option value="quality">Qualidade da fonte</option>
+            <option value="popularity">Popularidade externa</option>
+          </select>
+        </div>
+        <div className={styles.controlActions}>
+          <button className="button secondary" type="button" onClick={selectVisible} disabled={!filtered.length}>
+            Selecionar visíveis
+          </button>
+          <button className="button secondary" type="button" onClick={() => setSelected([])} disabled={!selected.length}>
+            Limpar
+          </button>
+        </div>
       </section>
 
       <div className={styles.selectionHelp}>
         <strong>{selected.length} de {MAX_ARTICLES} selecionados</strong>
-        <span>Escolha de 3 a 12 artigos. Artigos sobre o mesmo fato são agrupados como fontes de uma única história.</span>
+        <span>Escolha de 3 a 12 artigos. Itens sobre o mesmo fato são agrupados como fontes de uma única história.</span>
       </div>
 
       <section className={styles.list} aria-label="Artigos coletados">
@@ -145,16 +176,29 @@ export function ArticleSelector({ articles }: { articles: ArticleOption[] }) {
                 <div className={styles.meta}>
                   <span className="badge">{article.contentType}</span>
                   <span>{article.sourceName}</span>
-                  <span>qualidade {Math.round(article.sourceQuality * 100)}%</span>
+                  <span>fonte {Math.round(article.sourceQuality * 100)}%</span>
                   <span>{new Date(article.publishedAt).toLocaleString("pt-BR")}</span>
                 </div>
                 <a className={styles.titleLink} href={article.canonicalUrl} target="_blank" rel="noreferrer">
                   {article.title}
                 </a>
                 {article.summary ? <p>{article.summary}</p> : null}
+                {article.insight ? (
+                  <div className={styles.insightBox}>
+                    <div className={styles.insightHeader}>
+                      <strong>Filtro editorial</strong>
+                      <span className={styles.relevance}>{article.insight.relevanceScore.toFixed(1)}/10</span>
+                      <span className="badge">{article.insight.category}</span>
+                    </div>
+                    {article.insight.rationale ? <span>{article.insight.rationale}</span> : null}
+                  </div>
+                ) : (
+                  <div className={styles.pendingInsight}>Ainda não classificado pelo Gemini.</div>
+                )}
                 <div className={styles.signals}>
                   {article.popularity.points > 0 ? <span>{article.popularity.points} pontos</span> : null}
                   {article.popularity.comments > 0 ? <span>{article.popularity.comments} comentários</span> : null}
+                  {article.popularity.mentions > 1 ? <span>{article.popularity.mentions} menções</span> : null}
                   <a href={article.canonicalUrl} target="_blank" rel="noreferrer">Ler na fonte ↗</a>
                 </div>
               </div>

@@ -42,6 +42,10 @@ export type SlideLayout =
   | "sources"
   | "cta";
 
+export type SlideComposition = "editorial" | "poster" | "modular" | "split" | "stack" | "list";
+export type SlideMotif = "brackets" | "orbit" | "grid" | "ribbon" | "frame" | "none";
+export type SlideTitleStyle = "sans" | "serif" | "mixed";
+
 export type PostSlide = {
   position: number;
   layout: SlideLayout;
@@ -53,6 +57,10 @@ export type PostSlide = {
   bullets?: string[];
   sourceLabels?: string[];
   accent?: "blue" | "black" | "white";
+  composition?: SlideComposition;
+  motif?: SlideMotif;
+  titleStyle?: SlideTitleStyle;
+  highlight?: string;
 };
 
 export type GeneratedPost = {

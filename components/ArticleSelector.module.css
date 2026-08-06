@@ -5,7 +5,7 @@
 
 .controls {
   display: grid;
-  grid-template-columns: minmax(220px, 1.6fr) minmax(170px, 0.7fr) auto auto;
+  grid-template-columns: minmax(220px, 1.5fr) minmax(165px, 0.7fr) minmax(185px, 0.8fr) auto;
   gap: 12px;
   align-items: end;
   padding: 18px;
@@ -16,6 +16,11 @@
 
 .controls :global(.field) {
   margin: 0;
+}
+
+.controlActions {
+  display: flex;
+  gap: 8px;
 }
 
 .selectionHelp {
@@ -110,7 +115,7 @@
   text-underline-offset: 3px;
 }
 
-.articleBody p {
+.articleBody > p {
   display: -webkit-box;
   overflow: hidden;
   margin: 10px 0 0;
@@ -118,6 +123,52 @@
   line-height: 1.5;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+}
+
+.insightBox {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid rgba(42, 0, 255, 0.13);
+  border-radius: 14px;
+  background: rgba(42, 0, 255, 0.035);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.insightHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.insightHeader > strong {
+  color: var(--ink);
+  margin-right: 3px;
+}
+
+.relevance {
+  display: inline-flex;
+  align-items: center;
+  min-height: 27px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--white);
+  background: var(--blue);
+  font-weight: 800;
+}
+
+.pendingInsight {
+  width: fit-content;
+  margin-top: 13px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  color: var(--muted);
+  background: var(--soft);
+  font-size: 12px;
 }
 
 .signals {
@@ -165,7 +216,7 @@
   margin: 3px 0 0;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1120px) {
   .controls {
     grid-template-columns: 1fr 1fr;
   }
@@ -174,6 +225,10 @@
 @media (max-width: 680px) {
   .controls {
     grid-template-columns: 1fr;
+  }
+
+  .controlActions {
+    flex-direction: column;
   }
 
   .article {
