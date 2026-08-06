@@ -1,5 +1,7 @@
 # Inventário visual fechado do Figma ID Academy
 
+Versão do contrato: `figma-full-v1`
+
 Fonte auditada em modo somente leitura em 6 de agosto de 2026:
 
 ```text
