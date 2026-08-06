@@ -2,7 +2,7 @@
 
 Aplicação web multiusuário que coleta notícias de inteligência artificial, filtra os artigos mais relevantes, cria um carrossel semanal fiel à identidade do Inteli Academy, revisa automaticamente, publica no Instagram e aprende com o desempenho real do perfil.
 
-> O Figma original foi usado somente como referência de leitura. Nenhuma página ou camada do arquivo foi alterada.
+> O Figma original foi analisado integralmente em modo somente leitura. Nenhuma página, camada, componente ou asset do arquivo foi alterado.
 
 ## Produto atual
 
@@ -40,20 +40,42 @@ Para controlar o consumo de tokens, somente os 60 candidatos mais fortes após o
 
 ## Identidade visual dos posts
 
-O sistema visual dos carrosséis toma como referências:
+O contrato visual foi extraído das oito páginas do arquivo Figma **ID Academy**:
 
-- azul elétrico `#2A00FF`, branco, carvão `#272727` e cinza muito claro;
-- grandes títulos e numerais editoriais;
-- combinação de tipografia grotesca com serif editorial;
-- grids assimétricos, espaço negativo e blocos sólidos;
-- monograma `IA`;
-- cards arredondados, linhas finas e motivos geométricos;
-- composições de capa, pôster, módulos, divisão, pilha e lista;
-- brackets, órbitas, grids técnicos, faixas e molduras.
+```text
+Apresentações
+Calendário
+teste
+Creative Deposit
+Social Media
+Produtos
+Totens
+stock photos
+```
 
-Esses elementos orientam a direção de arte sem funcionar como uma lista de recursos obrigatórios ou proibidos. A validação técnica exige apenas capa inicial, CTA final, posições consistentes e limites de densidade de texto.
+Foram analisados 6.158 nós. A geração usa uma whitelist fechada:
 
-As fontes permanecem em `factualClaims`, na revisão factual e na legenda. O carrossel não precisa ter um slide exclusivo de fontes.
+```text
+elemento ou valor presente no Figma → permitido
+elemento ou valor ausente do Figma → rejeitado
+```
+
+O catálogo enumera:
+
+- todas as cores e gradientes detectados;
+- todas as famílias tipográficas e pesos;
+- tamanhos de texto, raios e strokes;
+- sombras, blur, glass e shader;
+- modos de imagem `FILL`, `FIT`, `CROP` e vídeo como still;
+- layouts de apresentação, post, story, calendário, produto, banner e totem;
+- composições editoriais, pôsteres, grids, colagens, full-bleed, mockups e sticker sheets;
+- formas e elementos como retângulos, elipses, vetores, linhas, brackets, órbitas, connectors, QR codes, text paths, stickers, stamps, robôs 3D, embalagens, washi tape, keycaps e textura de parede.
+
+O JSON Schema enviado ao Gemini contém os enums fechados. Zod rejeita valores externos, a revisão programática revalida cada campo e o renderer só implementa os tokens enumerados.
+
+As fontes factuais permanecem em `factualClaims`, na revisão factual e na legenda. O carrossel não precisa ter um slide exclusivo de fontes.
+
+Consulte [`docs/figma-visual-inventory.md`](docs/figma-visual-inventory.md) para o inventário e as regras de atualização.
 
 ## Pipeline
 
@@ -68,7 +90,7 @@ catálogo completo de feeds + fontes fixas + Hacker News
 → agrupamento por acontecimento
 → ranking quantitativo + relevância editorial
 → seleção automática ou manual
-→ geração do carrossel
+→ geração do carrossel com whitelist visual fechada
 → revisão factual, editorial, visual e técnica
 → correção automática
 → aprovação e agendamento
@@ -99,7 +121,7 @@ npm install
 npm run dev
 ```
 
-Consulte [`docs/SETUP.md`](docs/SETUP.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) e [`docs/n8n-migration.md`](docs/n8n-migration.md).
+Consulte [`docs/SETUP.md`](docs/SETUP.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/n8n-migration.md`](docs/n8n-migration.md) e [`docs/figma-visual-inventory.md`](docs/figma-visual-inventory.md).
 
 ## Segurança operacional
 

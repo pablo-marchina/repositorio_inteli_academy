@@ -1,11 +1,28 @@
 import { z } from "zod";
 import { env } from "@/lib/env";
 import { brand } from "@/lib/brand";
+import {
+  FIGMA_COLORS,
+  FIGMA_COMPOSITIONS,
+  FIGMA_CORNER_RADII,
+  FIGMA_EFFECTS,
+  FIGMA_FONT_WEIGHTS,
+  FIGMA_GRADIENT_IDS,
+  FIGMA_LAYOUTS,
+  FIGMA_MEDIA_MODES,
+  FIGMA_MOTIFS,
+  FIGMA_SOURCE,
+  FIGMA_STROKE_WEIGHTS,
+  FIGMA_TYPEFACES,
+  FIGMA_TYPE_SIZES,
+  FIGMA_VISUAL_ELEMENTS,
+  isAllowedFigmaValue
+} from "@/lib/figma-visual-system";
 import type { GeneratedPost, ReviewResult, StoryCluster } from "@/lib/types";
 
 const slideSchema = z.object({
   position: z.number().int().min(1).max(10),
-  layout: z.enum(["cover", "headline", "stat", "split", "timeline", "cards", "impact", "sources", "cta"]),
+  layout: z.enum(FIGMA_LAYOUTS),
   eyebrow: z.string().max(64).optional(),
   title: z.string().min(1).max(100),
   body: z.string().max(360).optional(),
@@ -13,11 +30,26 @@ const slideSchema = z.object({
   statLabel: z.string().max(90).optional(),
   bullets: z.array(z.string().max(120)).max(4).optional(),
   sourceLabels: z.array(z.string().max(80)).max(8).optional(),
-  accent: z.enum(["blue", "black", "white"]),
-  composition: z.enum(["editorial", "poster", "modular", "split", "stack", "list"]),
-  motif: z.enum(["brackets", "orbit", "grid", "ribbon", "frame", "none"]),
-  titleStyle: z.enum(["sans", "serif", "mixed"]),
-  highlight: z.string().max(48).optional()
+  highlight: z.string().max(48).optional(),
+  backgroundColor: z.enum(FIGMA_COLORS),
+  foregroundColor: z.enum(FIGMA_COLORS),
+  accentColor: z.enum(FIGMA_COLORS),
+  gradient: z.enum(FIGMA_GRADIENT_IDS),
+  composition: z.enum(FIGMA_COMPOSITIONS),
+  motif: z.enum(FIGMA_MOTIFS),
+  titleTypeface: z.enum(FIGMA_TYPEFACES),
+  bodyTypeface: z.enum(FIGMA_TYPEFACES),
+  titleWeight: z.enum(FIGMA_FONT_WEIGHTS),
+  bodyWeight: z.enum(FIGMA_FONT_WEIGHTS),
+  titleItalic: z.boolean(),
+  bodyItalic: z.boolean(),
+  titleSize: z.enum(FIGMA_TYPE_SIZES),
+  bodySize: z.enum(FIGMA_TYPE_SIZES),
+  cornerRadius: z.enum(FIGMA_CORNER_RADII),
+  strokeWeight: z.enum(FIGMA_STROKE_WEIGHTS),
+  effect: z.enum(FIGMA_EFFECTS),
+  mediaMode: z.enum(FIGMA_MEDIA_MODES),
+  visualElements: z.array(z.enum(FIGMA_VISUAL_ELEMENTS)).max(4)
 });
 
 const generatedPostSchema = z.object({
@@ -129,8 +161,10 @@ function clusterContext(clusters: StoryCluster[]) {
     .join("\n\n");
 }
 
+const auditedPages = FIGMA_SOURCE.pages.join(", ");
+
 export async function generateEditorialPost(clusters: StoryCluster[], historicalGuidance: string) {
-  const system = `Você é o diretor editorial e de arte do Instagram da Inteli Academy. Crie um carrossel brasileiro de IA com alta precisão factual, forte narrativa e alta fidelidade à identidade visual. Retorne somente JSON válido.
+  const system = `Você é o diretor editorial e de arte do Instagram da Inteli Academy. Crie um carrossel brasileiro de IA com alta precisão factual, narrativa forte e identidade visual auditável. Retorne somente JSON válido.
 
 OBJETIVO EDITORIAL
 - Escolha de 3 a 5 acontecimentos com maior utilidade, novidade e potencial de compartilhamento ou salvamento.
@@ -140,18 +174,19 @@ OBJETIVO EDITORIAL
 - Toda afirmação factual deve aparecer em factualClaims com uma URL fornecida nas evidências.
 - A capa deve prometer um benefício ou aprendizado concreto, nunca apenas “notícias da semana”.
 - A legenda deve incluir contexto, uma chamada para salvar ou compartilhar e uma seção curta de fontes.
-- As fontes devem ficar na legenda e em factualClaims; não é necessário criar slide exclusivo de fontes.
+- As fontes ficam na legenda e em factualClaims; não crie slide exclusivo de fontes.
 
-REFERÊNCIAS VISUAIS INTELI ACADEMY
-- Tome como base o azul elétrico ${brand.colors.blue}, branco, carvão ${brand.colors.black} e cinza muito claro ${brand.colors.soft}.
-- Use tipografia grotesca geométrica e direta para informação e serif editorial de alto contraste quando ela fortalecer a hierarquia.
-- Explore grids editoriais assimétricos, margens generosas, títulos muito grandes, numerais editoriais, blocos sólidos, linhas finas, cantos arredondados e o monograma IA.
-- Brackets de canto, órbitas circulares, grid técnico, faixas, molduras e cards modulares são referências disponíveis, não uma lista fechada.
-- Use liberdade criativa para combinar recursos visuais quando isso melhorar clareza, impacto e coerência com a marca.
-- Um conceito principal por slide e uma hierarquia visual clara são preferíveis a excesso de informação.
+CONTRATO VISUAL FECHADO
+- O contrato foi extraído em modo somente leitura de todas as páginas do Figma ID Academy: ${auditedPages}.
+- Os enums do schema JSON são a lista completa de valores permitidos para cores, gradientes, tipografias, pesos, tamanhos, raios, strokes, efeitos, tratamentos de mídia, layouts, composições, motivos e elementos gráficos.
+- Escolha somente valores presentes nesses enums. Não invente nomes, tokens, cores, fontes, efeitos, formas, motivos ou layouts fora do schema.
+- Combine os elementos permitidos com liberdade editorial, mas mantenha uma hierarquia clara e um conceito principal por slide.
 - Use entre ${brand.visualRules.minSlides} e ${brand.visualRules.maxSlides} slides.
 - A sequência deve começar com capa, desenvolver a narrativa e terminar com CTA.
-- O campo highlight, quando usado, deve ser uma palavra ou frase que exista literalmente no title.
+- Use visualElements para declarar todos os elementos decorativos do slide; no máximo quatro.
+- O campo highlight, quando usado, deve existir literalmente em title.
+- Tamanhos acima de 180 devem ser reservados a números ou palavras muito curtas.
+- bodySize deve permanecer legível e proporcional à quantidade de texto.
 
 DENSIDADE
 - Título ideal: 3 a 9 palavras e no máximo ${brand.visualRules.maxTitleCharacters} caracteres.
@@ -159,29 +194,8 @@ DENSIDADE
 - No máximo ${brand.visualRules.maxBullets} bullets por slide.
 - Cards devem conter frases curtas e escaneáveis.
 
-FORMATO JSON
-{
-  "title": "...",
-  "caption": "...",
-  "slides": [{
-    "position": 1,
-    "layout": "cover",
-    "eyebrow": "...",
-    "title": "...",
-    "body": "...",
-    "stat": "...",
-    "statLabel": "...",
-    "bullets": [],
-    "sourceLabels": [],
-    "accent": "blue",
-    "composition": "editorial",
-    "motif": "brackets",
-    "titleStyle": "mixed",
-    "highlight": "..."
-  }],
-  "features": {"research":0,"market":0,"tool":0,"regulation":0,"hasNumber":0,"slideCount":8,"coverQuestion":0,"coverPromise":1,"styleFidelity":1},
-  "factualClaims": [{"claim":"...","sourceUrl":"https://..."}]
-}`;
+FORMATO
+Preencha todos os campos visuais obrigatórios do schema. Use gradient="none", effect="none" ou mediaMode="none" quando o recurso não for necessário.`;
 
   const user = `CANDIDATOS DA SEMANA\n${clusterContext(clusters)}\n\nAPRENDIZADO DO PERFIL\n${historicalGuidance || "Ainda não há histórico suficiente; priorize clareza, novidade, utilidade e potencial de compartilhamento."}`;
   const generated = await callGeminiJson<GeneratedPost>(
@@ -221,7 +235,7 @@ export async function editorialReview(post: GeneratedPost, historicalGuidance: s
     [
       {
         role: "system",
-        content: `Você é um revisor editorial e diretor de arte da Inteli Academy. Avalie clareza, força da capa, progressão narrativa, densidade, utilidade, potencial de compartilhamento e salvamento, ausência de clickbait e coerência geral com a identidade da marca. Considere paleta, tipografia, grids, espaço negativo, monograma IA, cards e motivos geométricos como referências, sem tratar nenhum recurso visual isolado como proibido ou como motivo automático de reprovação. Não exija slide de fontes. Retorne somente JSON: {"passed":boolean,"score":0-100,"issues":[],"corrections":[]}. Exija score >= 90 para passed=true.`
+        content: `Você é um revisor editorial e diretor de arte da Inteli Academy. Avalie clareza, força da capa, progressão narrativa, densidade, utilidade e potencial de compartilhamento e salvamento. O contrato visual é fechado e foi extraído de todas as páginas do Figma ID Academy (${auditedPages}). Reprove qualquer valor visual, elemento, motivo ou composição que não pertença aos enums do post. Não exija slide de fontes. Retorne somente JSON: {"passed":boolean,"score":0-100,"issues":[],"corrections":[]}. Exija score >= 90 para passed=true.`
       },
       {
         role: "user",
@@ -231,6 +245,18 @@ export async function editorialReview(post: GeneratedPost, historicalGuidance: s
     reviewSchema,
     { thinkingLevel: "high" }
   );
+}
+
+function invalidToken(
+  issues: string[],
+  position: number,
+  label: string,
+  value: unknown,
+  allowed: readonly string[]
+) {
+  if (!isAllowedFigmaValue(value, allowed)) {
+    issues.push(`${label} fora da whitelist do Figma no slide ${position}.`);
+  }
 }
 
 export function programmaticReview(post: GeneratedPost): ReviewResult {
@@ -246,15 +272,43 @@ export function programmaticReview(post: GeneratedPost): ReviewResult {
   if (new Set(positions).size !== positions.length) issues.push("Há posições de slides duplicadas.");
 
   for (const slide of post.slides) {
+    invalidToken(issues, slide.position, "layout", slide.layout, FIGMA_LAYOUTS);
+    invalidToken(issues, slide.position, "backgroundColor", slide.backgroundColor, FIGMA_COLORS);
+    invalidToken(issues, slide.position, "foregroundColor", slide.foregroundColor, FIGMA_COLORS);
+    invalidToken(issues, slide.position, "accentColor", slide.accentColor, FIGMA_COLORS);
+    invalidToken(issues, slide.position, "gradient", slide.gradient, FIGMA_GRADIENT_IDS);
+    invalidToken(issues, slide.position, "composition", slide.composition, FIGMA_COMPOSITIONS);
+    invalidToken(issues, slide.position, "motif", slide.motif, FIGMA_MOTIFS);
+    invalidToken(issues, slide.position, "titleTypeface", slide.titleTypeface, FIGMA_TYPEFACES);
+    invalidToken(issues, slide.position, "bodyTypeface", slide.bodyTypeface, FIGMA_TYPEFACES);
+    invalidToken(issues, slide.position, "titleWeight", slide.titleWeight, FIGMA_FONT_WEIGHTS);
+    invalidToken(issues, slide.position, "bodyWeight", slide.bodyWeight, FIGMA_FONT_WEIGHTS);
+    invalidToken(issues, slide.position, "titleSize", slide.titleSize, FIGMA_TYPE_SIZES);
+    invalidToken(issues, slide.position, "bodySize", slide.bodySize, FIGMA_TYPE_SIZES);
+    invalidToken(issues, slide.position, "cornerRadius", slide.cornerRadius, FIGMA_CORNER_RADII);
+    invalidToken(issues, slide.position, "strokeWeight", slide.strokeWeight, FIGMA_STROKE_WEIGHTS);
+    invalidToken(issues, slide.position, "effect", slide.effect, FIGMA_EFFECTS);
+    invalidToken(issues, slide.position, "mediaMode", slide.mediaMode, FIGMA_MEDIA_MODES);
+
+    for (const element of slide.visualElements ?? []) {
+      invalidToken(issues, slide.position, "visualElement", element, FIGMA_VISUAL_ELEMENTS);
+    }
+    if ((slide.visualElements?.length ?? 0) > 4) issues.push(`Elementos visuais em excesso no slide ${slide.position}.`);
     if (slide.title.length > brand.visualRules.maxTitleCharacters) issues.push(`Título longo no slide ${slide.position}.`);
     if ((slide.body?.length ?? 0) > brand.visualRules.maxBodyCharacters) issues.push(`Texto longo no slide ${slide.position}.`);
     if ((slide.bullets?.length ?? 0) > brand.visualRules.maxBullets) issues.push(`Bullets em excesso no slide ${slide.position}.`);
     if (slide.highlight && !slide.title.toLocaleLowerCase("pt-BR").includes(slide.highlight.toLocaleLowerCase("pt-BR"))) {
       issues.push(`O destaque do slide ${slide.position} não está contido no título.`);
     }
+
+    const titleSize = Number(slide.titleSize);
+    const bodySize = Number(slide.bodySize);
+    if (titleSize > 180 && slide.title.length > 12) issues.push(`Título incompatível com o tamanho escolhido no slide ${slide.position}.`);
+    if (bodySize > 64 && (slide.body?.length ?? 0) > 50) issues.push(`Corpo incompatível com o tamanho escolhido no slide ${slide.position}.`);
   }
+
   if (post.factualClaims.some((claim) => !claim.sourceUrl.startsWith("https://"))) issues.push("Toda fonte deve usar HTTPS.");
-  const score = Math.max(0, 100 - issues.length * 12);
+  const score = Math.max(0, 100 - issues.length * 10);
   return { passed: issues.length === 0, score, issues, corrections: issues };
 }
 
@@ -267,7 +321,7 @@ export async function repairPost(
     [
       {
         role: "system",
-        content: `Você é um editor corretor e diretor de arte. Corrija o post usando somente as evidências e resolva todos os problemas apontados. Preserve os pontos fortes, a sequência capa → narrativa → CTA e a identidade Inteli Academy. Mantenha as fontes na legenda e em factualClaims, sem exigir slide de fontes. Retorne somente o mesmo formato JSON do post original.`
+        content: `Você é um editor corretor e diretor de arte. Corrija o post usando somente as evidências e resolva todos os problemas apontados. Preserve os pontos fortes, a sequência capa → narrativa → CTA e mantenha cada campo visual estritamente dentro dos enums do contrato fechado extraído do Figma ID Academy. Mantenha as fontes na legenda e em factualClaims, sem criar slide de fontes. Retorne somente o mesmo formato JSON do post original.`
       },
       {
         role: "user",

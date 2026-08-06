@@ -1,3 +1,19 @@
+import type {
+  FigmaColor,
+  FigmaComposition,
+  FigmaCornerRadius,
+  FigmaEffect,
+  FigmaFontWeight,
+  FigmaGradient,
+  FigmaLayout,
+  FigmaMediaMode,
+  FigmaMotif,
+  FigmaStrokeWeight,
+  FigmaTypeface,
+  FigmaTypeSize,
+  FigmaVisualElement
+} from "@/lib/figma-visual-system";
+
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 export type ArticleCandidate = {
@@ -31,20 +47,9 @@ export type StoryCluster = {
   score: number;
 };
 
-export type SlideLayout =
-  | "cover"
-  | "headline"
-  | "stat"
-  | "split"
-  | "timeline"
-  | "cards"
-  | "impact"
-  | "sources"
-  | "cta";
-
-export type SlideComposition = "editorial" | "poster" | "modular" | "split" | "stack" | "list";
-export type SlideMotif = "brackets" | "orbit" | "grid" | "ribbon" | "frame" | "none";
-export type SlideTitleStyle = "sans" | "serif" | "mixed";
+export type SlideLayout = FigmaLayout | "sources";
+export type SlideComposition = FigmaComposition;
+export type SlideMotif = FigmaMotif;
 
 export type PostSlide = {
   position: number;
@@ -56,11 +61,29 @@ export type PostSlide = {
   statLabel?: string;
   bullets?: string[];
   sourceLabels?: string[];
-  accent?: "blue" | "black" | "white";
-  composition?: SlideComposition;
-  motif?: SlideMotif;
-  titleStyle?: SlideTitleStyle;
   highlight?: string;
+  backgroundColor?: FigmaColor;
+  foregroundColor?: FigmaColor;
+  accentColor?: FigmaColor;
+  gradient?: FigmaGradient;
+  composition?: FigmaComposition;
+  motif?: FigmaMotif;
+  titleTypeface?: FigmaTypeface;
+  bodyTypeface?: FigmaTypeface;
+  titleWeight?: FigmaFontWeight;
+  bodyWeight?: FigmaFontWeight;
+  titleItalic?: boolean;
+  bodyItalic?: boolean;
+  titleSize?: FigmaTypeSize;
+  bodySize?: FigmaTypeSize;
+  cornerRadius?: FigmaCornerRadius;
+  strokeWeight?: FigmaStrokeWeight;
+  effect?: FigmaEffect;
+  mediaMode?: FigmaMediaMode;
+  visualElements?: FigmaVisualElement[];
+  /** Campos mantidos apenas para renderizar posts antigos. */
+  accent?: "blue" | "black" | "white";
+  titleStyle?: "sans" | "serif" | "mixed";
 };
 
 export type GeneratedPost = {
