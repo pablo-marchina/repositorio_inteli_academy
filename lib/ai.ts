@@ -129,6 +129,7 @@ const wireGeneratedPostSchema = z.object({
 type WireGeneratedPost = z.infer<typeof wireGeneratedPostSchema>;
 type Message = { role: "system" | "user" | "assistant"; content: string };
 type ThinkingLevel = "minimal" | "low" | "medium" | "high";
+type GeminiContent = { role: "user" | "model"; parts: Array<{ text: string }> };
 
 type GeminiPayload = {
   candidates?: Array<{
@@ -167,6 +168,25 @@ function sanitizeGeminiSchema(value: unknown): unknown {
   return result;
 }
 
+function schemaPrompt(responseJsonSchema: Record<string, unknown>) {
+  return `FORMATO JSON OBRIGATÓRIO\nRetorne somente um objeto JSON que corresponda exatamente ao JSON Schema abaixo. Não envolva o objeto em outra chave, não omita propriedades listadas em required e não renomeie campos.\n\n${JSON.stringify(responseJsonSchema)}`;
+}
+
+function parseGeminiJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw.replace(/^```json\s*|```$/g, "").trim());
+  } catch (error) {
+    throw new Error(`Invalid JSON returned by Gemini: ${String(error)}`);
+  }
+}
+
+function zodIssueSummary(error: z.ZodError) {
+  return error.issues
+    .slice(0, 12)
+    .map((issue) => `${issue.path.length ? issue.path.join(".") : "<root>"}: ${issue.message}`)
+    .join("; ");
+}
+
 export async function callGeminiJson<T>(
   messages: Message[],
   schema: z.ZodType<T>,
@@ -180,7 +200,7 @@ export async function callGeminiJson<T>(
     .filter((message) => message.role === "system")
     .map((message) => message.content)
     .join("\n\n");
-  const contents = messages
+  const contents: GeminiContent[] = messages
     .filter((message) => message.role !== "system")
     .map((message) => ({
       role: message.role === "assistant" ? "model" : "user",
@@ -190,6 +210,7 @@ export async function callGeminiJson<T>(
   const rawSchema = z.toJSONSchema(schema, { target: "draft-07" }) as Record<string, unknown>;
   delete rawSchema.$schema;
   const responseJsonSchema = sanitizeGeminiSchema(rawSchema) as Record<string, unknown>;
+  const exactSchemaPrompt = schemaPrompt(responseJsonSchema);
 
   const generationConfig: Record<string, unknown> = {
     responseMimeType: "application/json",
@@ -201,7 +222,7 @@ export async function callGeminiJson<T>(
     };
   }
 
-  const request = async (configOverride: Record<string, unknown>) =>
+  const request = async (configOverride: Record<string, unknown>, contentOverride: GeminiContent[] = contents) =>
     fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST",
       headers: {
@@ -210,22 +231,27 @@ export async function callGeminiJson<T>(
       },
       body: JSON.stringify({
         systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
-        contents,
+        contents: contentOverride,
         generationConfig: configOverride
       }),
       cache: "no-store"
     });
 
+  const fallbackConfig = { ...generationConfig };
+  delete fallbackConfig.responseJsonSchema;
+
   let response = await request(generationConfig);
   if (!response.ok) {
     const firstError = await response.text();
     if (response.status === 400 && firstError.includes("INVALID_ARGUMENT")) {
-      const fallbackConfig = { ...generationConfig };
-      delete fallbackConfig.responseJsonSchema;
-      response = await request(fallbackConfig);
+      console.warn(`Gemini rejected responseJsonSchema for ${model}; retrying with the exact schema embedded in the prompt.`);
+      response = await request(fallbackConfig, [
+        ...contents,
+        { role: "user", parts: [{ text: exactSchemaPrompt }] }
+      ]);
       if (!response.ok) {
         throw new Error(
-          `Gemini request failed after compact-schema fallback (${response.status}, model ${model}): ${await response.text()}`
+          `Gemini request failed after schema-in-prompt fallback (${response.status}, model ${model}): ${await response.text()}`
         );
       }
     } else {
@@ -240,13 +266,43 @@ export async function callGeminiJson<T>(
     throw new Error(`Gemini returned no content${reason ? `: ${reason}` : "."}`);
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw.replace(/^```json\s*|```$/g, "").trim());
-  } catch (error) {
-    throw new Error(`Invalid JSON returned by Gemini: ${String(error)}`);
+  const parsed = parseGeminiJson(raw);
+  const validation = schema.safeParse(parsed);
+  if (validation.success) return validation.data;
+
+  const issueSummary = zodIssueSummary(validation.error);
+  console.warn(`Gemini returned JSON outside the required schema for ${model}; retrying once. ${issueSummary}`);
+
+  const repairResponse = await request(fallbackConfig, [
+    ...contents,
+    {
+      role: "user",
+      parts: [
+        {
+          text: `${exactSchemaPrompt}\n\nA resposta anterior não correspondeu ao formato obrigatório. Gere novamente o resultado completo, corrigindo estes erros de estrutura: ${issueSummary}`
+        }
+      ]
+    }
+  ]);
+  if (!repairResponse.ok) {
+    throw new Error(
+      `Gemini schema repair request failed (${repairResponse.status}, model ${model}): ${await repairResponse.text()}`
+    );
   }
-  return schema.parse(parsed);
+
+  const repairPayload = (await repairResponse.json()) as GeminiPayload;
+  const repairRaw = repairPayload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
+  if (!repairRaw) {
+    const reason = repairPayload.promptFeedback?.blockReasonMessage ?? repairPayload.promptFeedback?.blockReason ?? repairPayload.candidates?.[0]?.finishReason;
+    throw new Error(`Gemini returned no content during schema repair${reason ? `: ${reason}` : "."}`);
+  }
+
+  const repaired = parseGeminiJson(repairRaw);
+  const repairedValidation = schema.safeParse(repaired);
+  if (!repairedValidation.success) {
+    throw new Error(`Gemini returned JSON outside the required schema after repair: ${zodIssueSummary(repairedValidation.error)}`);
+  }
+  return repairedValidation.data;
 }
 
 function pick<T extends readonly string[]>(values: T, id: number, label: string): T[number] {
