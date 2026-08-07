@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyPublicAsset } from "@/lib/crypto";
-import { renderSlide } from "@/lib/renderer";
+import { renderInstagramHistoricalSlide } from "@/lib/instagram-historical-renderer";
 import { slideFromRow } from "@/lib/pipeline";
 
 export const runtime = "nodejs";
@@ -22,7 +22,7 @@ export async function GET(request: Request, context: { params: Promise<{ postId:
   ]);
   if (error || !slide) return Response.json({ error: "Slide não encontrado." }, { status: 404 });
 
-  return new ImageResponse(renderSlide(slideFromRow(slide.content), count ?? 1), {
+  return new ImageResponse(renderInstagramHistoricalSlide(slideFromRow(slide.content), count ?? 1), {
     width: 1080,
     height: 1350,
     headers: { "cache-control": "public, max-age=300, stale-while-revalidate=3600" }
