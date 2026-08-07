@@ -18,7 +18,7 @@ import {
   FIGMA_VISUAL_ELEMENTS,
   isAllowedFigmaValue
 } from "@/lib/figma-visual-system";
-import type { GeneratedPost, ReviewResult, StoryCluster } from "@/lib/types";
+import type { GeneratedPost, PostSlide, ReviewResult, StoryCluster } from "@/lib/types";
 
 const slideSchema = z.object({
   position: z.number().int().min(1).max(10),
@@ -67,6 +67,66 @@ const reviewSchema = z.object({
   corrections: z.array(z.string())
 });
 
+function visualIndex(values: readonly string[]) {
+  return z.number().int().min(0).max(values.length - 1);
+}
+
+/*
+ * Gemini can reject schemas containing very large enums. The wire schema keeps
+ * the remote JSON Schema small by using zero-based integer IDs. Every ID is
+ * decoded server-side into a value from the audited Figma whitelist and then
+ * validated again by generatedPostSchema before a post can be stored.
+ */
+const wireSlideSchema = z.object({
+  position: z.number().int().min(1).max(10),
+  layoutId: visualIndex(FIGMA_LAYOUTS),
+  eyebrow: z.string().optional(),
+  title: z.string(),
+  body: z.string().optional(),
+  stat: z.string().optional(),
+  statLabel: z.string().optional(),
+  bullets: z.array(z.string()).max(4).optional(),
+  highlight: z.string().optional(),
+  backgroundColorId: visualIndex(FIGMA_COLORS),
+  foregroundColorId: visualIndex(FIGMA_COLORS),
+  accentColorId: visualIndex(FIGMA_COLORS),
+  gradientId: visualIndex(FIGMA_GRADIENT_IDS),
+  compositionId: visualIndex(FIGMA_COMPOSITIONS),
+  motifId: visualIndex(FIGMA_MOTIFS),
+  titleTypefaceId: visualIndex(FIGMA_TYPEFACES),
+  bodyTypefaceId: visualIndex(FIGMA_TYPEFACES),
+  titleWeightId: visualIndex(FIGMA_FONT_WEIGHTS),
+  bodyWeightId: visualIndex(FIGMA_FONT_WEIGHTS),
+  titleItalic: z.boolean(),
+  bodyItalic: z.boolean(),
+  titleSizeId: visualIndex(FIGMA_TYPE_SIZES),
+  bodySizeId: visualIndex(FIGMA_TYPE_SIZES),
+  cornerRadiusId: visualIndex(FIGMA_CORNER_RADII),
+  strokeWeightId: visualIndex(FIGMA_STROKE_WEIGHTS),
+  effectId: visualIndex(FIGMA_EFFECTS),
+  mediaModeId: visualIndex(FIGMA_MEDIA_MODES),
+  visualElementIds: z.array(visualIndex(FIGMA_VISUAL_ELEMENTS)).max(4)
+});
+
+const wireGeneratedPostSchema = z.object({
+  title: z.string(),
+  caption: z.string(),
+  slides: z.array(wireSlideSchema).min(6).max(9),
+  features: z.object({
+    research: z.number(),
+    market: z.number(),
+    tool: z.number(),
+    regulation: z.number(),
+    hasNumber: z.number(),
+    slideCount: z.number(),
+    coverQuestion: z.number(),
+    coverPromise: z.number(),
+    styleFidelity: z.number()
+  }),
+  factualClaims: z.array(z.object({ claim: z.string(), sourceUrl: z.string() })).min(1)
+});
+
+type WireGeneratedPost = z.infer<typeof wireGeneratedPostSchema>;
 type Message = { role: "system" | "user" | "assistant"; content: string };
 type ThinkingLevel = "minimal" | "low" | "medium" | "high";
 
@@ -82,6 +142,30 @@ type GeminiCallOptions = {
   model?: string;
   thinkingLevel?: ThinkingLevel;
 };
+
+const unsupportedSchemaKeys = new Set([
+  "minLength",
+  "maxLength",
+  "pattern",
+  "default",
+  "examples",
+  "contentEncoding",
+  "contentMediaType",
+  "propertyNames",
+  "uniqueItems"
+]);
+
+function sanitizeGeminiSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeGeminiSchema);
+  if (!value || typeof value !== "object") return value;
+
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (unsupportedSchemaKeys.has(key)) continue;
+    result[key] = sanitizeGeminiSchema(child);
+  }
+  return result;
+}
 
 export async function callGeminiJson<T>(
   messages: Message[],
@@ -102,8 +186,10 @@ export async function callGeminiJson<T>(
       role: message.role === "assistant" ? "model" : "user",
       parts: [{ text: message.content }]
     }));
-  const responseJsonSchema = z.toJSONSchema(schema, { target: "draft-07" }) as Record<string, unknown>;
-  delete responseJsonSchema.$schema;
+
+  const rawSchema = z.toJSONSchema(schema, { target: "draft-07" }) as Record<string, unknown>;
+  delete rawSchema.$schema;
+  const responseJsonSchema = sanitizeGeminiSchema(rawSchema) as Record<string, unknown>;
 
   const generationConfig: Record<string, unknown> = {
     responseMimeType: "application/json",
@@ -115,24 +201,38 @@ export async function callGeminiJson<T>(
     };
   }
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
+  const request = async (configOverride: Record<string, unknown>) =>
+    fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST",
       headers: {
-        "x-goog-api-key": config.GEMINI_API_KEY,
+        "x-goog-api-key": config.GEMINI_API_KEY!,
         "content-type": "application/json"
       },
       body: JSON.stringify({
         systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
         contents,
-        generationConfig
+        generationConfig: configOverride
       }),
       cache: "no-store"
-    }
-  );
+    });
 
-  if (!response.ok) throw new Error(`Gemini request failed (${response.status}): ${await response.text()}`);
+  let response = await request(generationConfig);
+  if (!response.ok) {
+    const firstError = await response.text();
+    if (response.status === 400 && firstError.includes("INVALID_ARGUMENT")) {
+      const fallbackConfig = { ...generationConfig };
+      delete fallbackConfig.responseJsonSchema;
+      response = await request(fallbackConfig);
+      if (!response.ok) {
+        throw new Error(
+          `Gemini request failed after compact-schema fallback (${response.status}, model ${model}): ${await response.text()}`
+        );
+      }
+    } else {
+      throw new Error(`Gemini request failed (${response.status}, model ${model}): ${firstError}`);
+    }
+  }
+
   const payload = (await response.json()) as GeminiPayload;
   const raw = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
   if (!raw) {
@@ -149,6 +249,69 @@ export async function callGeminiJson<T>(
   return schema.parse(parsed);
 }
 
+function pick<T extends readonly string[]>(values: T, id: number, label: string): T[number] {
+  const value = values[id];
+  if (value === undefined) throw new Error(`Invalid ${label} id returned by Gemini: ${id}`);
+  return value;
+}
+
+function decodeWirePost(wire: WireGeneratedPost): GeneratedPost {
+  const slides: PostSlide[] = wire.slides.map((slide) => ({
+    position: slide.position,
+    layout: pick(FIGMA_LAYOUTS, slide.layoutId, "layout"),
+    eyebrow: slide.eyebrow,
+    title: slide.title,
+    body: slide.body,
+    stat: slide.stat,
+    statLabel: slide.statLabel,
+    bullets: slide.bullets,
+    highlight: slide.highlight,
+    backgroundColor: pick(FIGMA_COLORS, slide.backgroundColorId, "background color"),
+    foregroundColor: pick(FIGMA_COLORS, slide.foregroundColorId, "foreground color"),
+    accentColor: pick(FIGMA_COLORS, slide.accentColorId, "accent color"),
+    gradient: pick(FIGMA_GRADIENT_IDS, slide.gradientId, "gradient"),
+    composition: pick(FIGMA_COMPOSITIONS, slide.compositionId, "composition"),
+    motif: pick(FIGMA_MOTIFS, slide.motifId, "motif"),
+    titleTypeface: pick(FIGMA_TYPEFACES, slide.titleTypefaceId, "title typeface"),
+    bodyTypeface: pick(FIGMA_TYPEFACES, slide.bodyTypefaceId, "body typeface"),
+    titleWeight: pick(FIGMA_FONT_WEIGHTS, slide.titleWeightId, "title weight"),
+    bodyWeight: pick(FIGMA_FONT_WEIGHTS, slide.bodyWeightId, "body weight"),
+    titleItalic: slide.titleItalic,
+    bodyItalic: slide.bodyItalic,
+    titleSize: pick(FIGMA_TYPE_SIZES, slide.titleSizeId, "title size"),
+    bodySize: pick(FIGMA_TYPE_SIZES, slide.bodySizeId, "body size"),
+    cornerRadius: pick(FIGMA_CORNER_RADII, slide.cornerRadiusId, "corner radius"),
+    strokeWeight: pick(FIGMA_STROKE_WEIGHTS, slide.strokeWeightId, "stroke weight"),
+    effect: pick(FIGMA_EFFECTS, slide.effectId, "effect"),
+    mediaMode: pick(FIGMA_MEDIA_MODES, slide.mediaModeId, "media mode"),
+    visualElements: slide.visualElementIds.map((id) => pick(FIGMA_VISUAL_ELEMENTS, id, "visual element"))
+  }));
+
+  return generatedPostSchema.parse({
+    title: wire.title,
+    caption: wire.caption,
+    slides,
+    features: wire.features,
+    factualClaims: wire.factualClaims
+  }) as GeneratedPost;
+}
+
+const visualTokenCatalog = JSON.stringify({
+  colors: FIGMA_COLORS,
+  gradients: FIGMA_GRADIENT_IDS,
+  layouts: FIGMA_LAYOUTS,
+  compositions: FIGMA_COMPOSITIONS,
+  motifs: FIGMA_MOTIFS,
+  typefaces: FIGMA_TYPEFACES,
+  fontWeights: FIGMA_FONT_WEIGHTS,
+  typeSizes: FIGMA_TYPE_SIZES,
+  cornerRadii: FIGMA_CORNER_RADII,
+  strokeWeights: FIGMA_STROKE_WEIGHTS,
+  effects: FIGMA_EFFECTS,
+  mediaModes: FIGMA_MEDIA_MODES,
+  visualElements: FIGMA_VISUAL_ELEMENTS
+});
+
 function clusterContext(clusters: StoryCluster[]) {
   return clusters
     .map(
@@ -163,54 +326,28 @@ function clusterContext(clusters: StoryCluster[]) {
 
 const auditedPages = FIGMA_SOURCE.pages.join(", ");
 
+function visualContractPrompt() {
+  return `CONTRATO VISUAL FECHADO\n- O contrato foi extraído de todas as páginas do Figma ID Academy: ${auditedPages}.\n- Cada campo visual termina em Id e deve receber o índice ZERO-BASED do valor correspondente no catálogo abaixo.\n- Todo ID válido resolve necessariamente para um elemento presente no Figma; não use valores fora dos intervalos do schema.\n- visualElementIds recebe no máximo quatro índices da lista visualElements.\n- Combine os elementos permitidos com liberdade editorial e hierarquia clara.\n\nCATÁLOGO DE TOKENS (índice = posição zero-based na lista)\n${visualTokenCatalog}`;
+}
+
 export async function generateEditorialPost(clusters: StoryCluster[], historicalGuidance: string) {
-  const system = `Você é o diretor editorial e de arte do Instagram da Inteli Academy. Crie um carrossel brasileiro de IA com alta precisão factual, narrativa forte e identidade visual auditável. Retorne somente JSON válido.
-
-OBJETIVO EDITORIAL
-- Escolha de 3 a 5 acontecimentos com maior utilidade, novidade e potencial de compartilhamento ou salvamento.
-- Explique por que cada acontecimento importa para uma pessoa não especialista.
-- Use português brasileiro natural, específico e sóbrio.
-- Não invente números, citações, datas, causalidade ou conclusões.
-- Toda afirmação factual deve aparecer em factualClaims com uma URL fornecida nas evidências.
-- A capa deve prometer um benefício ou aprendizado concreto, nunca apenas “notícias da semana”.
-- A legenda deve incluir contexto, uma chamada para salvar ou compartilhar e uma seção curta de fontes.
-- As fontes ficam na legenda e em factualClaims; não crie slide exclusivo de fontes.
-
-CONTRATO VISUAL FECHADO
-- O contrato foi extraído em modo somente leitura de todas as páginas do Figma ID Academy: ${auditedPages}.
-- Os enums do schema JSON são a lista completa de valores permitidos para cores, gradientes, tipografias, pesos, tamanhos, raios, strokes, efeitos, tratamentos de mídia, layouts, composições, motivos e elementos gráficos.
-- Escolha somente valores presentes nesses enums. Não invente nomes, tokens, cores, fontes, efeitos, formas, motivos ou layouts fora do schema.
-- Combine os elementos permitidos com liberdade editorial, mas mantenha uma hierarquia clara e um conceito principal por slide.
-- Use entre ${brand.visualRules.minSlides} e ${brand.visualRules.maxSlides} slides.
-- A sequência deve começar com capa, desenvolver a narrativa e terminar com CTA.
-- Use visualElements para declarar todos os elementos decorativos do slide; no máximo quatro.
-- O campo highlight, quando usado, deve existir literalmente em title.
-- Tamanhos acima de 180 devem ser reservados a números ou palavras muito curtas.
-- bodySize deve permanecer legível e proporcional à quantidade de texto.
-
-DENSIDADE
-- Título ideal: 3 a 9 palavras e no máximo ${brand.visualRules.maxTitleCharacters} caracteres.
-- Corpo: no máximo ${brand.visualRules.maxBodyCharacters} caracteres e preferencialmente até 42 palavras.
-- No máximo ${brand.visualRules.maxBullets} bullets por slide.
-- Cards devem conter frases curtas e escaneáveis.
-
-FORMATO
-Preencha todos os campos visuais obrigatórios do schema. Use gradient="none", effect="none" ou mediaMode="none" quando o recurso não for necessário.`;
+  const system = `Você é o diretor editorial e de arte do Instagram da Inteli Academy. Crie um carrossel brasileiro de IA com alta precisão factual, narrativa forte e identidade visual auditável. Retorne somente JSON válido.\n\nOBJETIVO EDITORIAL\n- Escolha de 3 a 5 acontecimentos com maior utilidade, novidade e potencial de compartilhamento ou salvamento.\n- Explique por que cada acontecimento importa para uma pessoa não especialista.\n- Use português brasileiro natural, específico e sóbrio.\n- Não invente números, citações, datas, causalidade ou conclusões.\n- Toda afirmação factual deve aparecer em factualClaims com uma URL fornecida nas evidências.\n- A capa deve prometer um benefício ou aprendizado concreto.\n- A legenda deve incluir contexto, chamada para salvar ou compartilhar e uma seção curta de fontes.\n- As fontes ficam na legenda e em factualClaims; não crie slide exclusivo de fontes.\n\n${visualContractPrompt()}\n\nESTRUTURA\n- Use entre ${brand.visualRules.minSlides} e ${brand.visualRules.maxSlides} slides.\n- O primeiro slide deve usar layoutId correspondente a cover.\n- O último deve usar layoutId correspondente a cta.\n- Um conceito principal por slide.\n- Títulos idealmente entre 3 e 9 palavras e até ${brand.visualRules.maxTitleCharacters} caracteres.\n- Corpo com até ${brand.visualRules.maxBodyCharacters} caracteres e no máximo ${brand.visualRules.maxBullets} bullets.\n- Tamanhos acima de 180 apenas para números ou palavras muito curtas.\n- highlight, quando usado, deve existir literalmente no title.\n- features deve preencher todos os nove campos numéricos do schema.`;
 
   const user = `CANDIDATOS DA SEMANA\n${clusterContext(clusters)}\n\nAPRENDIZADO DO PERFIL\n${historicalGuidance || "Ainda não há histórico suficiente; priorize clareza, novidade, utilidade e potencial de compartilhamento."}`;
-  const generated = await callGeminiJson<GeneratedPost>(
+  const wire = await callGeminiJson<WireGeneratedPost>(
     [
       { role: "system", content: system },
       { role: "user", content: user }
     ],
-    generatedPostSchema,
+    wireGeneratedPostSchema,
     { thinkingLevel: "high" }
   );
 
+  const generated = decodeWirePost(wire);
   generated.slides = generated.slides
     .sort((a, b) => a.position - b.position)
     .map((slide, index) => ({ ...slide, position: index + 1 }));
-  return generated satisfies GeneratedPost;
+  return generated;
 }
 
 export async function factualReview(post: GeneratedPost, evidence: StoryCluster[]): Promise<ReviewResult> {
@@ -218,7 +355,7 @@ export async function factualReview(post: GeneratedPost, evidence: StoryCluster[
     [
       {
         role: "system",
-        content: `Você é um fact-checker independente. Compare TODAS as afirmações do post com as evidências fornecidas. Reprove se houver afirmação sem fonte compatível, exagero causal, número não sustentado, citação inventada ou URL que não esteja nas evidências. As fontes podem ficar somente na legenda e em factualClaims; não exija slide de fontes. Retorne somente JSON: {"passed":boolean,"score":0-100,"issues":[],"corrections":[]}. Exija score >= 92 para passed=true.`
+        content: `Você é um fact-checker independente. Compare TODAS as afirmações do post com as evidências fornecidas. Reprove se houver afirmação sem fonte compatível, exagero causal, número não sustentado, citação inventada ou URL que não esteja nas evidências. As fontes podem ficar somente na legenda e em factualClaims; não exija slide de fontes. Retorne somente JSON com passed, score, issues e corrections. Exija score >= 92 para passed=true.`
       },
       {
         role: "user",
@@ -235,7 +372,7 @@ export async function editorialReview(post: GeneratedPost, historicalGuidance: s
     [
       {
         role: "system",
-        content: `Você é um revisor editorial e diretor de arte da Inteli Academy. Avalie clareza, força da capa, progressão narrativa, densidade, utilidade e potencial de compartilhamento e salvamento. O contrato visual é fechado e foi extraído de todas as páginas do Figma ID Academy (${auditedPages}). Reprove qualquer valor visual, elemento, motivo ou composição que não pertença aos enums do post. Não exija slide de fontes. Retorne somente JSON: {"passed":boolean,"score":0-100,"issues":[],"corrections":[]}. Exija score >= 90 para passed=true.`
+        content: `Você é um revisor editorial e diretor de arte da Inteli Academy. Avalie clareza, força da capa, progressão narrativa, densidade, utilidade e potencial de compartilhamento e salvamento. O contrato visual é fechado e foi extraído de todas as páginas do Figma ID Academy (${auditedPages}). A aplicação já converteu IDs para tokens auditados; trate qualquer token fora da whitelist como reprovação. Não exija slide de fontes. Retorne somente JSON com passed, score, issues e corrections. Exija score >= 90 para passed=true.`
       },
       {
         role: "user",
@@ -317,18 +454,19 @@ export async function repairPost(
   reviews: ReviewResult[],
   evidence: StoryCluster[]
 ): Promise<GeneratedPost> {
-  return callGeminiJson<GeneratedPost>(
+  const wire = await callGeminiJson<WireGeneratedPost>(
     [
       {
         role: "system",
-        content: `Você é um editor corretor e diretor de arte. Corrija o post usando somente as evidências e resolva todos os problemas apontados. Preserve os pontos fortes, a sequência capa → narrativa → CTA e mantenha cada campo visual estritamente dentro dos enums do contrato fechado extraído do Figma ID Academy. Mantenha as fontes na legenda e em factualClaims, sem criar slide de fontes. Retorne somente o mesmo formato JSON do post original.`
+        content: `Você é um editor corretor e diretor de arte. Corrija o post usando somente as evidências e resolva todos os problemas apontados. Preserve os pontos fortes, a sequência capa → narrativa → CTA e o contrato fechado do Figma. As fontes ficam na legenda e em factualClaims.\n\n${visualContractPrompt()}\n\nRetorne o post corrigido usando os IDs numéricos do schema.`
       },
       {
         role: "user",
         content: `POST ORIGINAL\n${JSON.stringify(post)}\n\nREVISÕES\n${JSON.stringify(reviews)}\n\nEVIDÊNCIAS\n${clusterContext(evidence)}`
       }
     ],
-    generatedPostSchema,
+    wireGeneratedPostSchema,
     { thinkingLevel: "high" }
   );
+  return decodeWirePost(wire);
 }
