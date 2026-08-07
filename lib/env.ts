@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { installGeminiModelFallback } from "@/lib/gemini-model-fallback";
 
 const booleanString = z
   .enum(["true", "false"])
@@ -13,6 +14,7 @@ const serverSchema = z.object({
   GEMINI_API_KEY: z.string().min(1).optional(),
   GEMINI_POST_MODEL: z.string().min(1).default("gemini-3.6-flash"),
   GEMINI_FILTER_MODEL: z.string().min(1).default("gemini-3.5-flash-lite"),
+  GEMINI_FALLBACK_MODELS: z.string().default("gemini-3.5-flash,gemini-3.5-flash-lite"),
   META_APP_ID: z.string().min(1).optional(),
   META_APP_SECRET: z.string().min(1).optional(),
   META_GRAPH_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v26.0"),
@@ -33,6 +35,7 @@ let cached: z.infer<typeof serverSchema> | null = null;
 export function env() {
   if (cached) return cached;
   cached = serverSchema.parse(process.env);
+  installGeminiModelFallback(cached.GEMINI_FALLBACK_MODELS.split(","));
   return cached;
 }
 
