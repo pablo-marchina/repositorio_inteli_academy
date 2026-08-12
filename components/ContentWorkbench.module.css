@@ -1,0 +1,39 @@
+.layout { display: grid; grid-template-columns: 280px minmax(0,1fr); gap: 22px; align-items: start; }
+.sidebar { position: sticky; top: 22px; display: grid; gap: 10px; }
+.version { width: 100%; text-align: left; border: 1px solid #dedee7; background: #fff; border-radius: 12px; padding: 12px; cursor: pointer; }
+.versionActive { border-color: #2a00ff; box-shadow: 0 0 0 2px rgba(42,0,255,.12); background: #f7f5ff; }
+.version strong { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.version span { display: block; font-size: 11px; color: #777; }
+.panel { display: grid; gap: 18px; }
+.card { border: 1px solid #e2e2e8; background: #fff; border-radius: 16px; padding: 20px; }
+.card h2,.card h3 { margin-top: 0; }
+.previewRow { display: flex; gap: 14px; overflow-x: auto; padding: 4px 4px 12px; }
+.frame { position: relative; flex: 0 0 270px; aspect-ratio: 4/5; overflow: hidden; border-radius: 12px; background: #f8f8f8; border: 1px solid #e5e5eb; padding: 56px 24px 26px; color: #272727; box-shadow: 0 8px 24px rgba(0,0,0,.06); }
+.frameVertical { aspect-ratio: 9/16; flex-basis: 240px; padding-top: 74px; }
+.frameCta { background: #111; color: #fff; }
+.orbA,.orbB { position: absolute; width: 180px; height: 180px; border-radius: 999px; background: #d0c7ff; opacity: .16; pointer-events: none; }
+.orbA { left: -100px; top: -90px; }.orbB { right: -100px; bottom: -80px; }
+.logo { position: absolute; left: 22px; top: 20px; color: #2a00ff; font-weight: 900; font-style: italic; letter-spacing: -3px; }
+.frameCta .logo { color: #fff; }
+.index { position: absolute; right: 22px; top: 23px; font-size: 10px; color: #666; }.frameCta .index { color: #bbb; }
+.eyebrow { position: relative; z-index: 2; color: #2a00ff; text-transform: uppercase; letter-spacing: 1.5px; font-size: 9px; font-weight: 800; }
+.frameCta .eyebrow { color: #fff; }
+.frame h4 { position: relative; z-index: 2; color: #2a00ff; font-size: 25px; line-height: .98; letter-spacing: -1px; margin: 10px 0 12px; }
+.frameVertical h4 { font-size: 28px; margin-top: 14px; }.frameCta h4 { color: #fff; }
+.frame p { position: relative; z-index: 2; font-size: 11px; line-height: 1.35; margin: 0 0 10px; }
+.frame ul { position: relative; z-index: 2; margin: 10px 0 0; padding-left: 16px; font-size: 10px; line-height: 1.45; }
+.stat { position: relative; z-index: 2; color: #2a00ff; font-size: 52px; font-weight: 800; line-height: .9; margin: 14px 0; }.frameCta .stat { color: #fff; }
+.media { position: relative; z-index: 1; width: 100%; aspect-ratio: 16/10; margin: 12px 0; border-radius: 9px; background: #ececf1 center/cover no-repeat; }
+.rule { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: #2a00ff; }
+.caption { white-space: pre-wrap; line-height: 1.55; color: #444; max-height: 240px; overflow: auto; }
+.textarea { width: 100%; min-height: 120px; padding: 12px; border: 1px solid #dcdce5; border-radius: 10px; font: inherit; resize: vertical; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.primary,.secondary,.danger { border-radius: 9px; padding: 10px 14px; font-weight: 700; cursor: pointer; }
+.primary { border: 0; background: #2a00ff; color: white; }.secondary { border: 1px solid #dcdce5; background: white; color: #222; }.danger { border: 0; background: #101010; color: white; }
+.primary:disabled,.secondary:disabled,.danger:disabled { opacity: .5; cursor: wait; }
+.status { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; font-size: 11px; background: #efeff4; color: #555; }
+.success { background: #e9f8ee; color: #176b33; }.warning { background: #fff5dd; color: #7d5700; }.error { color: #b42318; font-size: 13px; margin-top: 8px; }
+.provenance { display: grid; gap: 8px; font-size: 12px; color: #555; }.provenance strong { color: #222; }
+.figmaBox { border: 1px solid #d0c7ff; background: #f7f5ff; border-radius: 12px; padding: 14px; }
+.figmaBox p { margin: 5px 0; color: #555; }
+@media (max-width: 900px) { .layout { grid-template-columns: 1fr; }.sidebar { position: static; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); }.frame { flex-basis: 230px; } }
