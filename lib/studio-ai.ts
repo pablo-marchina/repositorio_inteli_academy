@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { callGeminiJson } from "@/lib/ai";
 import { env } from "@/lib/env";
-import { FIGMA_SOURCE } from "@/lib/figma-visual-system";
+import { FIGMA_AUDITED_PAGE_NAMES } from "@/lib/figma-audit";
 import type { DriveAsset, InstagramReferencePost, StudioContentType, StudioPayload } from "@/lib/types";
 
 const frameSchema = z.object({
@@ -87,6 +87,41 @@ function referenceText(reference: InstagramReferencePost | null, analysis: Recor
     `Este post tem prioridade de estilo para ESTA geração. Replique princípios de composição e ritmo, nunca texto, marcas de terceiros ou conteúdo factual dele.`;
 }
 
+function validateStudioPayload(payload: StudioPayload, allowedAssets: DriveAsset[]) {
+  const normalized: StudioPayload = {
+    ...payload,
+    frames: [...payload.frames]
+      .sort((a, b) => a.position - b.position)
+      .map((frame, index) => ({ ...frame, position: index + 1 }))
+  };
+  const expectedFrames = normalized.contentType === "carousel" ? null : 1;
+  if (expectedFrames && normalized.frames.length !== expectedFrames) {
+    throw new Error(`A geração de ${normalized.contentType} deve ter exatamente ${expectedFrames} frame.`);
+  }
+  if (normalized.contentType === "carousel" && (normalized.frames.length < 2 || normalized.frames.length > 10)) {
+    throw new Error("Carrossel deve ter entre 2 e 10 frames.");
+  }
+  if (normalized.contentType === "carousel" && normalized.frames[0]?.template !== "cover") {
+    throw new Error("O primeiro frame do carrossel deve ser uma capa.");
+  }
+  const allowedAssetIds = allowedAssets.map((asset) => asset.id);
+  for (const frame of normalized.frames) {
+    if (frame.mediaAssetId && !allowedAssetIds.includes(frame.mediaAssetId)) {
+      throw new Error("A geração tentou usar um asset do Drive que o usuário não autorizou.");
+    }
+  }
+  if (normalized.primaryDriveAssetId && !allowedAssetIds.includes(normalized.primaryDriveAssetId)) {
+    throw new Error("A geração tentou usar uma mídia principal não autorizada.");
+  }
+  if (normalized.contentType === "reel") {
+    const primary = allowedAssets.find((asset) => asset.id === normalized.primaryDriveAssetId);
+    if (!primary?.mimeType.startsWith("video/")) {
+      throw new Error("Reel requer um vídeo do Drive selecionado como mídia principal.");
+    }
+  }
+  return normalized;
+}
+
 export async function analyzeInstagramReferenceVisual(reference: InstagramReferencePost) {
   if (reference.visualAnalysis && Object.keys(reference.visualAnalysis).length) return reference.visualAnalysis;
   const imageUrl = reference.thumbnailUrl ?? (reference.mediaType === "IMAGE" ? reference.mediaUrl : null);
@@ -119,8 +154,8 @@ export async function analyzeInstagramReferenceVisual(reference: InstagramRefere
     }
   );
   if (!response.ok) return null;
-  const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-  const raw = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
+  const responsePayload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+  const raw = responsePayload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
   if (!raw) return null;
   try {
     return visualAnalysisSchema.parse(JSON.parse(raw.replace(/^```json\s*|```$/g, "").trim()));
@@ -139,7 +174,7 @@ export async function generateStudioPayload(input: {
   historicalInstagramGuidance: string;
 }): Promise<StudioPayload> {
   const allowedAssetIds = input.driveAssets.map((asset) => asset.id);
-  const system = `Você é o diretor editorial e de arte da Inteli Academy. Gere conteúdo para o Instagram oficial da liga usando evidências reais e a identidade existente.\n\nHIERARQUIA DE REFERÊNCIAS\n1. Um post real do @inteli.academy escolhido pelo usuário, quando existir, é a referência visual/editorial mais forte desta geração.\n2. O histórico real sincronizado do @inteli.academy define tom, densidade, formatos e padrões editoriais gerais.\n3. O Figma ID Academy define a identidade visual e a biblioteca de linguagem gráfica. Todas as páginas auditadas devem ser consideradas: ${FIGMA_SOURCE.pages.join(", ")}.\n4. Artigos e contexto do usuário definem os fatos e a mensagem.\n\nREGRAS\n- Não invente fatos, números, datas, citações ou URLs.\n- Toda factualClaim deve apontar para uma URL dos artigos fornecidos.\n- Use português brasileiro natural, direto e sem linguagem corporativa vazia.\n- Não copie literalmente o post de referência; reutilize princípios, não conteúdo.\n- O renderer e o plugin Figma controlam a gramática visual final. Escolha template e conteúdo, não invente estilos fora da Academy.\n- mediaAssetId e primaryDriveAssetId só podem usar IDs da lista de assets autorizados. Se a lista estiver vazia, omita esses campos.\n- Para Reel, primaryDriveAssetId deve ser um vídeo autorizado.\n- Para carrossel, varie cover/editorial/stat/quote/photo/cta conforme o conteúdo; não repita layouts sem motivo.\n- Garanta leitura confortável em mobile e pouca densidade por frame.\n\nFORMATO: ${input.contentType}\n${frameRules(input.contentType)}`;
+  const system = `Você é o diretor editorial e de arte da Inteli Academy. Gere conteúdo para o Instagram oficial da liga usando evidências reais e a identidade existente.\n\nHIERARQUIA DE REFERÊNCIAS\n1. Um post real do @inteli.academy escolhido pelo usuário, quando existir, é a referência visual/editorial mais forte desta geração.\n2. O histórico real sincronizado do @inteli.academy define tom, densidade, formatos e padrões editoriais gerais.\n3. O Figma ID Academy define a identidade visual e a biblioteca de linguagem gráfica. Todas as páginas auditadas em 12/08/2026 devem ser consideradas: ${FIGMA_AUDITED_PAGE_NAMES.join(", ")}. A página Social Media é a principal fonte visual do Figma para formatos sociais, sem excluir as demais páginas.\n4. Artigos e contexto do usuário definem os fatos e a mensagem.\n\nREGRAS\n- Não invente fatos, números, datas, citações ou URLs.\n- Toda factualClaim deve apontar para uma URL dos artigos fornecidos.\n- Use português brasileiro natural, direto e sem linguagem corporativa vazia.\n- Não copie literalmente o post de referência; reutilize princípios, não conteúdo.\n- O renderer e o plugin Figma controlam a gramática visual final. Escolha template e conteúdo, não invente estilos fora da Academy.\n- mediaAssetId e primaryDriveAssetId só podem usar IDs da lista de assets autorizados. Se a lista estiver vazia, omita esses campos.\n- Para Reel, primaryDriveAssetId deve ser um vídeo autorizado.\n- Para carrossel, varie cover/editorial/stat/quote/photo/cta conforme o conteúdo; não repita layouts sem motivo.\n- Garanta leitura confortável em mobile e pouca densidade por frame.\n\nFORMATO: ${input.contentType}\n${frameRules(input.contentType)}`;
 
   const user = `ARTIGOS SELECIONADOS\n${evidenceText(input.articles)}\n\n` +
     `CONTEXTO ESPECÍFICO DO USUÁRIO\n${input.userContext.trim() || "Nenhum contexto adicional."}\n\n` +
@@ -153,29 +188,8 @@ export async function generateStudioPayload(input: {
     studioPayloadSchema,
     { thinkingLevel: "high" }
   );
-
-  const expectedFrames = input.contentType === "carousel" ? null : 1;
-  if (expectedFrames && payload.frames.length !== expectedFrames) {
-    throw new Error(`A geração de ${input.contentType} deve ter exatamente ${expectedFrames} frame.`);
-  }
-  if (input.contentType === "carousel" && (payload.frames.length < 2 || payload.frames.length > 10)) {
-    throw new Error("Carrossel deve ter entre 2 e 10 frames.");
-  }
-  for (const frame of payload.frames) {
-    if (frame.mediaAssetId && !allowedAssetIds.includes(frame.mediaAssetId)) {
-      throw new Error("A geração tentou usar um asset do Drive que o usuário não autorizou.");
-    }
-  }
-  if (payload.primaryDriveAssetId && !allowedAssetIds.includes(payload.primaryDriveAssetId)) {
-    throw new Error("A geração tentou usar uma mídia principal não autorizada.");
-  }
-  if (input.contentType === "reel") {
-    const primary = input.driveAssets.find((asset) => asset.id === payload.primaryDriveAssetId);
-    if (!primary?.mimeType.startsWith("video/")) {
-      throw new Error("Reel requer um vídeo do Drive selecionado como mídia principal.");
-    }
-  }
-  return payload;
+  if (payload.contentType !== input.contentType) throw new Error("A geração retornou um tipo de conteúdo diferente do solicitado.");
+  return validateStudioPayload(payload, input.driveAssets);
 }
 
 export async function reviseStudioPayload(input: {
@@ -187,7 +201,7 @@ export async function reviseStudioPayload(input: {
   driveAssets: DriveAsset[];
   historicalInstagramGuidance: string;
 }) {
-  const system = `Você está revisando uma versão visual/editorial já gerada para o Instagram da Inteli Academy. A alteração pedida pelo usuário tem prioridade, mas deve preservar precisão factual, formato, identidade da Academy e os assets autorizados. Retorne a versão COMPLETA, não apenas um diff. Não altere fatos sem suporte nos artigos. O post real de referência continua sendo a referência visual prioritária quando existir.`;
+  const system = `Você está revisando uma versão visual/editorial já gerada para o Instagram da Inteli Academy. A alteração pedida pelo usuário tem prioridade, mas deve preservar precisão factual, formato, identidade da Academy e os assets autorizados. Retorne a versão COMPLETA, não apenas um diff. Não altere fatos sem suporte nos artigos. O post real de referência continua sendo a referência visual prioritária quando existir. Todas as páginas auditadas do Figma (${FIGMA_AUDITED_PAGE_NAMES.join(", ")}) continuam válidas como identidade.`;
   const user = `VERSÃO ATUAL\n${JSON.stringify(input.current)}\n\nALTERAÇÃO PEDIDA\n${input.changeRequest}\n\nARTIGOS\n${evidenceText(input.articles)}\n\nREFERÊNCIA REAL\n${referenceText(input.reference, input.referenceAnalysis)}\n\nHISTÓRICO\n${input.historicalInstagramGuidance}\n\nASSETS AUTORIZADOS\n${assetsText(input.driveAssets)}`;
   const revised = await callGeminiJson(
     [{ role: "system", content: system }, { role: "user", content: user }],
@@ -197,14 +211,5 @@ export async function reviseStudioPayload(input: {
   if (revised.contentType !== input.current.contentType) {
     throw new Error("Uma revisão visual não pode trocar o tipo de conteúdo. Crie um novo projeto para outro formato.");
   }
-  const allowedAssetIds = input.driveAssets.map((asset) => asset.id);
-  if (revised.primaryDriveAssetId && !allowedAssetIds.includes(revised.primaryDriveAssetId)) {
-    throw new Error("A revisão tentou usar uma mídia não autorizada.");
-  }
-  for (const frame of revised.frames) {
-    if (frame.mediaAssetId && !allowedAssetIds.includes(frame.mediaAssetId)) {
-      throw new Error("A revisão tentou usar um asset não autorizado.");
-    }
-  }
-  return revised;
+  return validateStudioPayload(revised, input.driveAssets);
 }
