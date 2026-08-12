@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { apiAdmin } from "@/lib/api-auth";
-import { createStudioRevision } from "@/lib/studio";
+import { createStudioRevision, syncInstagramReferences } from "@/lib/studio";
 
 export const maxDuration = 300;
 
@@ -15,6 +15,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
   try {
     const { projectId } = await context.params;
     const input = schema.parse(await request.json());
+    await syncInstagramReferences();
     const result = await createStudioRevision(projectId, input.baseVersionId, input.changeRequest, auth.user.id);
     return Response.json({ result });
   } catch (error) {
