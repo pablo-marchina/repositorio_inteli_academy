@@ -81,6 +81,7 @@ export type PostSlide = {
   effect?: FigmaEffect;
   mediaMode?: FigmaMediaMode;
   visualElements?: FigmaVisualElement[];
+  mediaAssetId?: string;
   /** Campos mantidos apenas para renderizar posts antigos. */
   accent?: "blue" | "black" | "white";
   titleStyle?: "sans" | "serif" | "mixed";
@@ -120,4 +121,54 @@ export type EngagementMetrics = {
   follows: number;
   profileVisits: number;
   totalInteractions: number;
+};
+
+export type StudioContentType = "single" | "carousel" | "reel" | "story";
+export type StudioFrameTemplate = "cover" | "editorial" | "stat" | "quote" | "photo" | "cta";
+
+export type DriveAsset = {
+  id: string;
+  name: string;
+  mimeType: string;
+  webViewLink?: string | null;
+  thumbnailLink?: string | null;
+  modifiedTime?: string | null;
+  size?: string | null;
+  path?: string[];
+};
+
+export type InstagramReferencePost = {
+  id: string;
+  mediaType: string;
+  mediaProductType: string | null;
+  caption: string;
+  permalink: string;
+  mediaUrl: string | null;
+  thumbnailUrl: string | null;
+  timestamp: string;
+  children: Array<Record<string, unknown>>;
+  visualAnalysis?: Record<string, unknown>;
+};
+
+export type StudioFrame = {
+  position: number;
+  template: StudioFrameTemplate;
+  eyebrow?: string;
+  title: string;
+  body?: string;
+  bullets?: string[];
+  stat?: string;
+  statLabel?: string;
+  mediaAssetId?: string;
+  mediaFit?: "cover" | "contain";
+};
+
+export type StudioPayload = {
+  contentType: StudioContentType;
+  title: string;
+  caption: string;
+  frames: StudioFrame[];
+  factualClaims: Array<{ claim: string; sourceUrl: string }>;
+  primaryDriveAssetId?: string;
+  styleSummary: string;
 };
