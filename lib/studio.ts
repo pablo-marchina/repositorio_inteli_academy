@@ -103,8 +103,9 @@ export async function syncInstagramReferences() {
 async function getReference(mediaId?: string | null) {
   if (!mediaId) return null;
   const admin = createAdminClient();
-  let { data, error } = await admin.from("instagram_reference_posts").select("*").eq("id", mediaId).maybeSingle();
-  if (error) throw error;
+  const initial = await admin.from("instagram_reference_posts").select("*").eq("id", mediaId).maybeSingle();
+  if (initial.error) throw initial.error;
+  let data = initial.data;
   if (!data) {
     await syncInstagramReferences();
     const retry = await admin.from("instagram_reference_posts").select("*").eq("id", mediaId).maybeSingle();
