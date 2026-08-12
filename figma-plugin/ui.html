@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px; font: 13px/1.45 Inter, system-ui, sans-serif; color: var(--figma-color-text); background: var(--figma-color-bg); }
+    h1 { margin: 0 0 6px; font-size: 18px; }
+    p { margin: 0 0 18px; color: var(--figma-color-text-secondary); }
+    label { display: block; margin: 14px 0 6px; font-weight: 600; }
+    input { width: 100%; padding: 10px 11px; border: 1px solid var(--figma-color-border); border-radius: 7px; color: var(--figma-color-text); background: var(--figma-color-bg); outline: none; }
+    input:focus { border-color: #2a00ff; box-shadow: 0 0 0 2px rgba(42,0,255,.18); }
+    button { width: 100%; margin-top: 18px; padding: 11px 14px; border: 0; border-radius: 8px; color: white; background: #2a00ff; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .status { margin-top: 18px; padding: 12px; border-radius: 8px; background: var(--figma-color-bg-secondary); white-space: pre-wrap; }
+    .hint { margin-top: 18px; font-size: 12px; color: var(--figma-color-text-tertiary); }
+  </style>
+</head>
+<body>
+  <h1>Inteli Academy Content Bridge</h1>
+  <p>Importa somente a versão que foi escolhida na plataforma e a transforma em frames editáveis.</p>
+  <label for="url">URL da plataforma</label>
+  <input id="url" placeholder="https://academy-content.vercel.app" />
+  <label for="secret">Segredo do bridge</label>
+  <input id="secret" type="password" autocomplete="off" placeholder="FIGMA_PLUGIN_SECRET" />
+  <button id="import">Importar próxima versão escolhida</button>
+  <div class="status" id="status">Nenhuma operação iniciada.</div>
+  <div class="hint">Depois de editar os frames no Figma, volte à plataforma e clique em “Aprovar e publicar”. O backend exportará os node IDs atuais — não uma cópia antiga.</div>
+  <script>
+    const url = document.getElementById('url');
+    const secret = document.getElementById('secret');
+    const button = document.getElementById('import');
+    const status = document.getElementById('status');
+    parent.postMessage({ pluginMessage: { type: 'load-config' } }, '*');
+    button.onclick = () => {
+      button.disabled = true;
+      status.textContent = 'Importando…';
+      parent.postMessage({ pluginMessage: { type: 'import-next', platformUrl: url.value, secret: secret.value } }, '*');
+    };
+    onmessage = (event) => {
+      const message = event.data.pluginMessage;
+      if (!message) return;
+      if (message.type === 'config' && message.value) {
+        url.value = message.value.platformUrl || '';
+        secret.value = message.value.secret || '';
+        return;
+      }
+      button.disabled = false;
+      if (message.type === 'success') status.textContent = `✓ ${message.message}\nFrames: ${message.frameIds.join(', ')}`;
+      else if (message.type === 'empty') status.textContent = 'Não há versões aguardando importação.';
+      else if (message.type === 'error') status.textContent = `Erro: ${message.message}`;
+    };
+  </script>
+</body>
+</html>

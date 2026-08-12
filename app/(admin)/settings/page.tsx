@@ -7,10 +7,11 @@ import { env } from "@/lib/env";
 export default async function SettingsPage() {
   const { supabase } = await requireAdmin();
   const config = env();
-  const [account, settings, users] = await Promise.all([
+  const [account, settings, users, drive] = await Promise.all([
     supabase.from("instagram_accounts").select("username,account_type,token_expires_at").eq("is_active", true).order("connected_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("app_settings").select("timezone,publish_weekday,publish_hour,generation_lead_hours,auto_publish").eq("id", true).single(),
-    supabase.from("profiles").select("id,email,created_at").order("created_at")
+    supabase.from("profiles").select("id,email,created_at").order("created_at"),
+    supabase.from("drive_connections").select("google_email,root_folder_id,is_active,token_expires_at,connected_at").eq("id", true).maybeSingle()
   ]);
 
   return (
@@ -19,14 +20,53 @@ export default async function SettingsPage() {
         <div>
           <span className="eyebrow">Administração</span>
           <h1>Configurações</h1>
-          <p>Todos os usuários convidados são administradores. O Instagram e o agendamento podem ser alterados sem mudanças no código.</p>
+          <p>Todos os usuários convidados são administradores. Instagram, Drive, Figma e agendamento ficam centralizados aqui.</p>
         </div>
       </header>
       <section className="settings-stack">
         <article className="card">
           <h2>Instagram</h2>
           <InstagramConnectionCard account={account.data ?? null} />
+          <div className="code-note">Para usar posts reais como referências e publicar pelo Content Studio, reconecte a conta se ela tiver sido autorizada antes da permissão de Insights ser adicionada.</div>
         </article>
+
+        <article className="card">
+          <h2>Google Drive · biblioteca de mídia</h2>
+          {drive.data?.is_active ? (
+            <div className="list section">
+              <div className="list-row">
+                <div><h3>{drive.data.google_email || "Conta Google conectada"}</h3><p>Pasta raiz: {drive.data.root_folder_id}</p></div>
+                <span className="badge success">conectado</span>
+              </div>
+              <div className="list-row">
+                <div><h3>Acesso somente leitura</h3><p>A plataforma lista imagens e vídeos recursivamente; nenhum arquivo do Drive é alterado.</p></div>
+                <a className="badge" href="/api/drive/connect">Reconectar</a>
+              </div>
+            </div>
+          ) : (
+            <div className="section">
+              <p>Conecte a conta Google que tem acesso à pasta de mídia da Inteli Academy. O Content Studio só usa arquivos escolhidos explicitamente em cada geração.</p>
+              <a className="button" href="/api/drive/connect">Conectar Google Drive</a>
+            </div>
+          )}
+          <div className="code-note">Pasta configurada: {config.GOOGLE_DRIVE_ROOT_FOLDER_ID}. Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET na Vercel para habilitar o OAuth.</div>
+        </article>
+
+        <article className="card">
+          <h2>Figma · revisão final</h2>
+          <div className="list section">
+            <div className="list-row">
+              <div><h3>ID Academy</h3><p>Arquivo {config.FIGMA_FILE_KEY}; outputs entram em “{config.FIGMA_OUTPUT_PAGE_NAME}”.</p></div>
+              <span className={config.FIGMA_ACCESS_TOKEN ? "badge success" : "badge failed"}>{config.FIGMA_ACCESS_TOKEN ? "leitura/export configurada" : "falta token"}</span>
+            </div>
+            <div className="list-row">
+              <div><h3>Content Bridge</h3><p>O plugin interno importa apenas a versão escolhida como frames editáveis e devolve os node IDs para a plataforma.</p></div>
+              <span className={config.FIGMA_PLUGIN_SECRET ? "badge success" : "badge failed"}>{config.FIGMA_PLUGIN_SECRET ? "bridge configurado" : "falta segredo"}</span>
+            </div>
+          </div>
+          <div className="code-note">Instale o plugin local a partir de figma-plugin/manifest.json e configure nele a URL desta aplicação + o mesmo FIGMA_PLUGIN_SECRET. O token FIGMA_ACCESS_TOKEN permanece somente no servidor.</div>
+        </article>
+
         <article className="card">
           <h2>Agendamento</h2>
           {settings.data ? <ScheduleForm initial={settings.data} /> : <p className="feedback error">Execute a migration inicial do Supabase.</p>}
@@ -36,7 +76,7 @@ export default async function SettingsPage() {
           <p>A coleta percorre todos os feeds válidos do catálogo. Depois da deduplicação, um modelo rápido classifica os candidatos e o modelo editorial de maior qualidade cria e revisa o post.</p>
           <div className="list section">
             <div className="list-row">
-              <div><h3>Modelo editorial</h3><p>Geração, correção, revisão factual e revisão de estilo.</p></div>
+              <div><h3>Modelo editorial</h3><p>Geração, variações, análise da referência real, correção e revisão.</p></div>
               <span className={config.GEMINI_API_KEY ? "badge success" : "badge failed"}>{config.GEMINI_POST_MODEL}</span>
             </div>
             <div className="list-row">
@@ -68,7 +108,7 @@ export default async function SettingsPage() {
         <article className="card">
           <h2>Automação externa</h2>
           <p>O GitHub Actions chama o endpoint de cron a cada hora. Ele executa a coleta e filtragem quando vencidas, além das etapas de geração, publicação e métricas conforme o agendamento.</p>
-          <div className="code-note">Configure APP_URL e CRON_SECRET nos secrets do GitHub.</div>
+          <div className="code-note">Configure APP_URL e CRON_SECRET nos secrets do GitHub. O fluxo manual do Content Studio só publica após aprovação explícita.</div>
         </article>
       </section>
     </>

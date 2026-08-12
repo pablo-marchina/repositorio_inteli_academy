@@ -1,0 +1,10 @@
+create index if not exists cluster_articles_article_id_idx on public.cluster_articles(article_id);
+create index if not exists instagram_accounts_connected_by_idx on public.instagram_accounts(connected_by);
+create index if not exists drive_connections_connected_by_idx on public.drive_connections(connected_by);
+create index if not exists content_projects_created_by_idx on public.content_projects(created_by);
+create index if not exists content_projects_instagram_reference_idx on public.content_projects(instagram_reference_media_id);
+create index if not exists content_projects_selected_version_idx on public.content_projects(selected_version_id);
+create index if not exists content_versions_created_by_idx on public.content_versions(created_by);
+create index if not exists content_versions_parent_version_idx on public.content_versions(parent_version_id);
+create index if not exists figma_jobs_project_id_idx on public.figma_jobs(project_id);
+create index if not exists figma_jobs_version_id_idx on public.figma_jobs(version_id);

@@ -1,0 +1,13 @@
+{
+  "name": "Inteli Academy Content Bridge",
+  "id": "inteli-academy-content-bridge",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["*"],
+    "reasoning": "Internal plugin connects to the configurable Inteli Academy application deployment; selected Drive media is proxied by that backend."
+  }
+}
