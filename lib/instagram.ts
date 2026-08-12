@@ -1,7 +1,7 @@
 import { env } from "@/lib/env";
 import { decryptSecret } from "@/lib/crypto";
 import { parseInsights } from "@/lib/metrics";
-import type { EngagementMetrics, InstagramAccount } from "@/lib/types";
+import type { EngagementMetrics, InstagramAccount, InstagramReferencePost } from "@/lib/types";
 
 function config() {
   const values = env();
@@ -23,7 +23,10 @@ export function instagramAuthorizationUrl(state: string) {
   url.searchParams.set("client_id", values.META_APP_ID);
   url.searchParams.set("redirect_uri", `${values.NEXT_PUBLIC_APP_URL}/api/instagram/callback`);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", "instagram_business_basic,instagram_business_content_publish");
+  url.searchParams.set(
+    "scope",
+    "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights"
+  );
   url.searchParams.set("state", state);
   return url.toString();
 }
@@ -95,8 +98,15 @@ async function graphRequest<T>(
   return (await response.json()) as T;
 }
 
-async function createImageContainer(userId: string, imageUrl: string, accessToken: string) {
-  const body = new URLSearchParams({ image_url: imageUrl, is_carousel_item: "true" });
+async function createImageContainer(
+  userId: string,
+  imageUrl: string,
+  accessToken: string,
+  options: { carouselItem?: boolean; mediaType?: "STORIES" } = {}
+) {
+  const body = new URLSearchParams({ image_url: imageUrl });
+  if (options.carouselItem) body.set("is_carousel_item", "true");
+  if (options.mediaType) body.set("media_type", options.mediaType);
   return graphRequest<{ id: string }>(`${userId}/media`, accessToken, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -104,8 +114,22 @@ async function createImageContainer(userId: string, imageUrl: string, accessToke
   });
 }
 
-async function waitForContainer(containerId: string, accessToken: string) {
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+async function createVideoContainer(
+  userId: string,
+  videoUrl: string,
+  accessToken: string,
+  mediaType: "REELS" | "STORIES"
+) {
+  const body = new URLSearchParams({ video_url: videoUrl, media_type: mediaType });
+  return graphRequest<{ id: string }>(`${userId}/media`, accessToken, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body
+  });
+}
+
+async function waitForContainer(containerId: string, accessToken: string, attempts = 30) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     const status = await graphRequest<{ status_code?: string; status?: string }>(containerId, accessToken, undefined, {
       fields: "status_code,status"
     });
@@ -118,13 +142,34 @@ async function waitForContainer(containerId: string, accessToken: string) {
   throw new Error(`Instagram container ${containerId} was not ready in time.`);
 }
 
+async function publishContainer(userId: string, containerId: string, accessToken: string) {
+  const body = new URLSearchParams({ creation_id: containerId });
+  return graphRequest<{ id: string }>(`${userId}/media_publish`, accessToken, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body
+  });
+}
+
+export async function publishSingleImage(account: InstagramAccount, imageUrl: string, caption: string) {
+  const token = decryptSecret(account.accessTokenEncrypted);
+  const body = new URLSearchParams({ image_url: imageUrl, caption });
+  const container = await graphRequest<{ id: string }>(`${account.instagramUserId}/media`, token, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body
+  });
+  await waitForContainer(container.id, token);
+  return publishContainer(account.instagramUserId, container.id, token);
+}
+
 export async function publishCarousel(account: InstagramAccount, imageUrls: string[], caption: string) {
   if (imageUrls.length < 2 || imageUrls.length > 10) throw new Error("Instagram carousels require 2 to 10 images.");
   const token = decryptSecret(account.accessTokenEncrypted);
   const childIds: string[] = [];
 
   for (const imageUrl of imageUrls) {
-    const container = await createImageContainer(account.instagramUserId, imageUrl, token);
+    const container = await createImageContainer(account.instagramUserId, imageUrl, token, { carouselItem: true });
     await waitForContainer(container.id, token);
     childIds.push(container.id);
   }
@@ -140,13 +185,81 @@ export async function publishCarousel(account: InstagramAccount, imageUrls: stri
     body: parentBody
   });
   await waitForContainer(parent.id, token);
+  return publishContainer(account.instagramUserId, parent.id, token);
+}
 
-  const publishBody = new URLSearchParams({ creation_id: parent.id });
-  return graphRequest<{ id: string }>(`${account.instagramUserId}/media_publish`, token, {
+export async function publishReel(account: InstagramAccount, videoUrl: string, caption: string) {
+  const token = decryptSecret(account.accessTokenEncrypted);
+  const body = new URLSearchParams({ video_url: videoUrl, media_type: "REELS", caption, share_to_feed: "true" });
+  const container = await graphRequest<{ id: string }>(`${account.instagramUserId}/media`, token, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: publishBody
+    body
   });
+  await waitForContainer(container.id, token, 36);
+  return publishContainer(account.instagramUserId, container.id, token);
+}
+
+export async function publishStory(account: InstagramAccount, mediaUrl: string, isVideo: boolean) {
+  if ((account.accountType ?? "").toUpperCase() !== "BUSINESS") {
+    throw new Error("A API do Instagram permite publicação de Stories somente para contas Business.");
+  }
+  const token = decryptSecret(account.accessTokenEncrypted);
+  const container = isVideo
+    ? await createVideoContainer(account.instagramUserId, mediaUrl, token, "STORIES")
+    : await createImageContainer(account.instagramUserId, mediaUrl, token, { mediaType: "STORIES" });
+  await waitForContainer(container.id, token, isVideo ? 36 : 20);
+  return publishContainer(account.instagramUserId, container.id, token);
+}
+
+export async function listInstagramMedia(account: InstagramAccount, limit = 60): Promise<InstagramReferencePost[]> {
+  const token = decryptSecret(account.accessTokenEncrypted);
+  const result: InstagramReferencePost[] = [];
+  let after = "";
+  while (result.length < limit) {
+    const payload = await graphRequest<{
+      data?: Array<{
+        id: string;
+        media_type?: string;
+        media_product_type?: string;
+        caption?: string;
+        permalink?: string;
+        media_url?: string;
+        thumbnail_url?: string;
+        timestamp?: string;
+        children?: { data?: Array<Record<string, unknown>> };
+      }>;
+      paging?: { cursors?: { after?: string }; next?: string };
+    }>(`${account.instagramUserId}/media`, token, undefined, {
+      fields: "id,media_type,media_product_type,caption,permalink,media_url,thumbnail_url,timestamp,children{id,media_type,media_url,thumbnail_url}",
+      limit: String(Math.min(50, limit - result.length)),
+      ...(after ? { after } : {})
+    });
+    for (const media of payload.data ?? []) {
+      if (!media.id || !media.permalink || !media.timestamp) continue;
+      result.push({
+        id: media.id,
+        mediaType: media.media_type ?? "UNKNOWN",
+        mediaProductType: media.media_product_type ?? null,
+        caption: media.caption ?? "",
+        permalink: media.permalink,
+        mediaUrl: media.media_url ?? null,
+        thumbnailUrl: media.thumbnail_url ?? null,
+        timestamp: media.timestamp,
+        children: media.children?.data ?? []
+      });
+    }
+    const nextAfter = payload.paging?.cursors?.after;
+    if (!payload.paging?.next || !nextAfter || !payload.data?.length) break;
+    after = nextAfter;
+  }
+  return result.slice(0, limit);
+}
+
+export async function fetchInstagramPermalink(account: InstagramAccount, mediaId: string) {
+  const token = decryptSecret(account.accessTokenEncrypted);
+  const payload = await graphRequest<{ permalink?: string }>(mediaId, token, undefined, { fields: "permalink" });
+  return payload.permalink ?? null;
 }
 
 export async function fetchMediaInsights(account: InstagramAccount, mediaId: string): Promise<EngagementMetrics> {
