@@ -12,6 +12,7 @@ export function AppShell({ email, children }: { email: string; children: React.R
         <nav className="nav" aria-label="Navegação principal">
           <Link href="/dashboard">Visão geral</Link>
           <Link href="/articles">Artigos</Link>
+          <Link href="/create">Criar conteúdo</Link>
           <Link href="/posts">Publicações</Link>
           <Link href="/settings">Configurações</Link>
         </nav>
