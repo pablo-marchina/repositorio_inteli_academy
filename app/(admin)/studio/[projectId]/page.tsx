@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { ContentWorkbench } from "@/components/ContentWorkbench";
 import { requireAdmin } from "@/lib/auth";
 import { studioPayloadSchema } from "@/lib/studio-ai";
+import type { StructuredStudioPayload } from "@/lib/studio-artifact";
 import type { DriveAsset } from "@/lib/types";
 
 export default async function StudioProjectPage({ params }: { params: Promise<{ projectId: string }> }) {
@@ -46,7 +47,7 @@ export default async function StudioProjectPage({ params }: { params: Promise<{ 
     version_number: Number(row.version_number),
     parent_version_id: row.parent_version_id ? String(row.parent_version_id) : null,
     change_request: String(row.change_request ?? ""),
-    payload: studioPayloadSchema.parse(row.payload),
+    payload: studioPayloadSchema.passthrough().parse(row.payload) as StructuredStudioPayload,
     status: String(row.status),
     figma_frame_ids: Array.isArray(row.figma_frame_ids) ? row.figma_frame_ids.map(String) : [],
     created_at: String(row.created_at)
@@ -71,7 +72,7 @@ export default async function StudioProjectPage({ params }: { params: Promise<{ 
         <div>
           <span className="eyebrow">Content Studio</span>
           <h1>{normalizedProject.name}</h1>
-          <p>Compare as versões, peça novas alterações, escolha uma única versão para o Figma e publique somente depois da revisão final.</p>
+          <p>Compare versões estruturadas, refine por linguagem natural, edite no Figma sem perder a identidade e publique somente depois da revisão final.</p>
         </div>
       </header>
       <ContentWorkbench
