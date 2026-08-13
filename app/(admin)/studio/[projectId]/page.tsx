@@ -28,16 +28,18 @@ export default async function StudioProjectPage({ params }: { params: Promise<{ 
     : { data: [], error: null };
   if (articlesError) throw articlesError;
 
-  let reference: { id: string; permalink: string; caption: string } | null = null;
-  if (project.instagram_reference_media_id) {
-    const result = await supabase
-      .from("instagram_reference_posts")
-      .select("id,permalink,caption")
-      .eq("id", project.instagram_reference_media_id)
-      .maybeSingle();
-    if (result.error) throw result.error;
-    reference = result.data ?? null;
-  }
+  const referenceIds = Array.isArray(project.instagram_reference_media_ids)
+    ? project.instagram_reference_media_ids.map(String)
+    : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
+  const { data: references, error: referencesError } = referenceIds.length
+    ? await supabase.from("instagram_reference_posts").select("id,permalink,caption").in("id", referenceIds)
+    : { data: [], error: null };
+  if (referencesError) throw referencesError;
+  const referenceById = new Map((references ?? []).map((reference) => [String(reference.id), reference]));
+  const orderedReferences = referenceIds.flatMap((id) => {
+    const reference = referenceById.get(id);
+    return reference ? [reference] : [];
+  });
 
   const versions = (versionRows ?? []).map((row) => ({
     id: String(row.id),
@@ -77,7 +79,7 @@ export default async function StudioProjectPage({ params }: { params: Promise<{ 
         versions={versions}
         provenance={{
           articles: articles ?? [],
-          reference,
+          references: orderedReferences,
           userContext: String(project.user_context ?? "")
         }}
       />
