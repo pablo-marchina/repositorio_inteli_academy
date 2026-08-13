@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { signPublicAsset } from "@/lib/crypto";
 import { env } from "@/lib/env";
-import { getCurrentFigmaRenderUrls } from "@/lib/figma";
+import { getCurrentFigmaRenderUrls, getCurrentFigmaSemanticState } from "@/lib/figma";
 import { getDriveAsset } from "@/lib/google-drive";
 import {
   fetchInstagramPermalink,
@@ -19,6 +19,13 @@ import {
   studioPayloadSchema,
   type StudioArticleEvidence
 } from "@/lib/studio-ai";
+import {
+  attachFigmaBindings,
+  compileStudioArtifact,
+  getStudioArtifact,
+  type StructuredStudioPayload
+} from "@/lib/studio-artifact";
+import { reviewFigmaBrandFidelity } from "@/lib/studio-brand-critic";
 import type {
   DriveAsset,
   InstagramAccount,
@@ -196,6 +203,33 @@ function assertFormatMedia(contentType: StudioContentType, assets: DriveAsset[])
   }
 }
 
+function firstSemanticText(frame: Awaited<ReturnType<typeof getCurrentFigmaSemanticState>>[number] | undefined, role: string) {
+  return frame?.roles?.[role]?.map((item) => item.text?.trim()).find(Boolean);
+}
+
+function allSemanticText(frame: Awaited<ReturnType<typeof getCurrentFigmaSemanticState>>[number] | undefined, role: string) {
+  return frame?.roles?.[role]?.map((item) => item.text?.trim()).filter((value): value is string => Boolean(value)) ?? [];
+}
+
+function mergeCurrentFigmaContent(payload: StudioPayload, state: Awaited<ReturnType<typeof getCurrentFigmaSemanticState>>) {
+  return {
+    ...payload,
+    frames: payload.frames.map((frame, index) => {
+      const semantic = state[index];
+      const bullets = allSemanticText(semantic, "bullets");
+      return {
+        ...frame,
+        eyebrow: firstSemanticText(semantic, "eyebrow") ?? frame.eyebrow,
+        title: firstSemanticText(semantic, "headline") ?? frame.title,
+        body: firstSemanticText(semantic, "body") ?? frame.body,
+        stat: firstSemanticText(semantic, "stat") ?? frame.stat,
+        statLabel: firstSemanticText(semantic, "statLabel") ?? frame.statLabel,
+        bullets: bullets.length ? bullets : frame.bullets
+      };
+    })
+  } satisfies StudioPayload;
+}
+
 export async function createStudioProject(rawInput: unknown, userId: string) {
   const input = createSchema.parse(rawInput);
   const referenceIds = [...new Set([
@@ -209,7 +243,7 @@ export async function createStudioProject(rawInput: unknown, userId: string) {
     historicalInstagramGuidance()
   ]);
   assertFormatMedia(input.contentType, driveAssets);
-  const payload = await generateStudioPayload({
+  const generated = await generateStudioPayload({
     contentType: input.contentType,
     articles,
     userContext: input.userContext,
@@ -217,6 +251,7 @@ export async function createStudioProject(rawInput: unknown, userId: string) {
     references,
     historicalInstagramGuidance: history
   });
+  const payload = compileStudioArtifact(generated, { driveAssets });
 
   const admin = createAdminClient();
   const { data: project, error: projectError } = await admin.from("content_projects").insert({
@@ -249,11 +284,21 @@ export async function createStudioRevision(projectId: string, baseVersionId: str
   const admin = createAdminClient();
   const [{ data: project, error: projectError }, { data: base, error: baseError }] = await Promise.all([
     admin.from("content_projects").select("*").eq("id", projectId).single(),
-    admin.from("content_versions").select("id,payload,version_number").eq("id", baseVersionId).eq("project_id", projectId).single()
+    admin.from("content_versions").select("id,payload,version_number,figma_frame_ids").eq("id", baseVersionId).eq("project_id", projectId).single()
   ]);
   if (projectError) throw projectError;
   if (baseError) throw baseError;
-  const current = studioPayloadSchema.parse(base.payload);
+  const parsedCurrent = studioPayloadSchema.passthrough().parse(base.payload) as StudioPayload;
+  const baseFigmaFrameIds = Array.isArray(base.figma_frame_ids) ? base.figma_frame_ids.map(String) : [];
+  let current = parsedCurrent;
+  if (baseFigmaFrameIds.length) {
+    try {
+      const semanticState = await getCurrentFigmaSemanticState(baseFigmaFrameIds);
+      current = mergeCurrentFigmaContent(parsedCurrent, semanticState);
+    } catch {
+      current = parsedCurrent;
+    }
+  }
   const articleIds = Array.isArray(project.article_ids) ? project.article_ids.map(String) : [];
   const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : [];
   const referenceIds = Array.isArray(project.instagram_reference_media_ids)
@@ -274,18 +319,23 @@ export async function createStudioRevision(projectId: string, baseVersionId: str
     driveAssets,
     historicalInstagramGuidance: history
   });
+  const compiled = compileStudioArtifact(revised, {
+    driveAssets,
+    previousPayload: current,
+    baseFigmaFrameIds: baseFigmaFrameIds.length === revised.frames.length ? baseFigmaFrameIds : undefined
+  });
   const nextVersion = Number(latest.data.version_number) + 1;
   const { data: version, error } = await admin.from("content_versions").insert({
     project_id: projectId,
     version_number: nextVersion,
     parent_version_id: baseVersionId,
     change_request: changeRequest.trim(),
-    payload: revised,
+    payload: compiled,
     status: "generated",
     created_by: userId
   }).select("id,version_number").single();
   if (error) throw error;
-  await admin.from("content_projects").update({ name: revised.title, status: "generated", last_error: null }).eq("id", projectId);
+  await admin.from("content_projects").update({ name: compiled.title, status: "generated", last_error: null }).eq("id", projectId);
   return { versionId: version.id as string, versionNumber: nextVersion };
 }
 
@@ -297,7 +347,13 @@ export async function queueStudioVersionForFigma(projectId: string, versionId: s
   ]);
   if (projectError) throw projectError;
   if (versionError) throw versionError;
-  const payload = studioPayloadSchema.parse(version.payload);
+  const parsed = studioPayloadSchema.passthrough().parse(version.payload) as StudioPayload;
+  const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : [];
+  const payload: StructuredStudioPayload = getStudioArtifact(version.payload)
+    ? (version.payload as StructuredStudioPayload)
+    : compileStudioArtifact(parsed, { driveAssets });
+  if (!getStudioArtifact(version.payload)) await admin.from("content_versions").update({ payload }).eq("id", versionId);
+
   await admin.from("content_versions").update({ status: "superseded" }).eq("project_id", projectId).neq("id", versionId);
   await admin.from("content_versions").update({ status: "figma_queued" }).eq("id", versionId);
   await admin.from("content_projects").update({
@@ -340,21 +396,39 @@ export async function nextFigmaJob() {
   return data ?? null;
 }
 
-export async function completeFigmaJob(jobId: string, frameIds: string[]) {
+export async function completeFigmaJob(jobId: string, frameIds: string[], templateNodeIds: string[] = []) {
   if (!frameIds.length || frameIds.length > 10) throw new Error("O plugin não retornou uma lista válida de frames.");
   const admin = createAdminClient();
   const { data: job, error } = await admin.from("figma_jobs").select("project_id,version_id,payload").eq("id", jobId).eq("status", "queued").single();
   if (error) throw error;
-  const payload = job.payload as { payload?: { frames?: unknown[] } };
-  const expected = Array.isArray(payload?.payload?.frames) ? payload.payload.frames.length : frameIds.length;
+  const jobPayload = job.payload as { payload?: StructuredStudioPayload };
+  const expected = Array.isArray(jobPayload?.payload?.frames) ? jobPayload.payload.frames.length : frameIds.length;
   if (frameIds.length !== expected) throw new Error(`O plugin retornou ${frameIds.length} frames; eram esperados ${expected}.`);
+  if (templateNodeIds.length && templateNodeIds.length !== frameIds.length) throw new Error("A lista de templates do Figma não corresponde aos frames importados.");
+
+  let versionPayload = attachFigmaBindings(jobPayload.payload ?? ({} as StructuredStudioPayload), frameIds, templateNodeIds);
+  if (jobPayload.payload && templateNodeIds.length === frameIds.length) {
+    try {
+      const [outputRenderUrls, sourceRenderUrls] = await Promise.all([
+        getCurrentFigmaRenderUrls(frameIds, "png"),
+        getCurrentFigmaRenderUrls(templateNodeIds, "png")
+      ]);
+      const visualBrandReview = await reviewFigmaBrandFidelity({ payload: jobPayload.payload, outputRenderUrls, sourceRenderUrls });
+      if (visualBrandReview && versionPayload.artifact) {
+        versionPayload = { ...versionPayload, artifact: { ...versionPayload.artifact, visualBrandReview } };
+      }
+    } catch {
+      // Brand critic is an additional quality gate. A transient critic failure must not destroy an editable Figma import.
+    }
+  }
+
   const now = new Date().toISOString();
   await Promise.all([
     admin.from("figma_jobs").update({ status: "imported", frame_ids: frameIds, imported_at: now }).eq("id", jobId),
-    admin.from("content_versions").update({ status: "in_figma", figma_frame_ids: frameIds }).eq("id", job.version_id),
+    admin.from("content_versions").update({ status: "in_figma", figma_frame_ids: frameIds, payload: versionPayload }).eq("id", job.version_id),
     admin.from("content_projects").update({ status: "in_figma", figma_frame_ids: frameIds, figma_last_synced_at: now }).eq("id", job.project_id)
   ]);
-  return { projectId: job.project_id as string, versionId: job.version_id as string, frameIds };
+  return { projectId: job.project_id as string, versionId: job.version_id as string, frameIds, templateNodeIds };
 }
 
 export function publicDriveMediaUrl(projectId: string, fileId: string) {
@@ -370,14 +444,14 @@ export async function approveAndPublishStudioProject(projectId: string) {
   if (!project.selected_version_id) throw new Error("Escolha uma versão e envie-a ao Figma antes de aprovar.");
   const { data: version, error: versionError } = await admin.from("content_versions").select("id,payload,figma_frame_ids").eq("id", project.selected_version_id).single();
   if (versionError) throw versionError;
-  const payload = studioPayloadSchema.parse(version.payload) as StudioPayload;
+  const payload = studioPayloadSchema.passthrough().parse(version.payload) as StudioPayload;
   const frameIds = Array.isArray(version.figma_frame_ids) ? version.figma_frame_ids.map(String) : [];
   if (!frameIds.length) throw new Error("A versão escolhida ainda não foi importada pelo plugin do Figma.");
 
   await admin.from("content_projects").update({ status: "publishing", last_error: null }).eq("id", projectId);
   try {
     const account = await activeInstagramAccount();
-    // Always re-render now. This is deliberately not cached: manual edits in Figma are the source of truth.
+    // Always re-render now. Manual edits in Figma are the source of truth for static/carousel/story publishing.
     const currentFigmaImages = await getCurrentFigmaRenderUrls(frameIds, "png");
     let published: { id: string };
     if (payload.contentType === "single") {
@@ -391,8 +465,8 @@ export async function approveAndPublishStudioProject(projectId: string) {
       const videoId = payload.primaryDriveAssetId;
       const video = videoId ? driveAssets.find((asset) => asset.id === videoId) : null;
       if (!video?.mimeType.startsWith("video/")) throw new Error("O Reel aprovado não possui vídeo principal válido do Drive.");
-      // The reviewed Figma frame is verified above before publication. Instagram's current Reels endpoint consumes the video URL;
-      // it does not expose a documented cover_url in the official Instagram Login publishing request.
+      // The structured Remotion timeline stays editable/exportable. Until a rendered motion file is explicitly approved,
+      // publishing keeps the original selected footage rather than silently flattening an unreviewed animation.
       published = await publishReel(account, publicDriveMediaUrl(projectId, video.id), payload.caption);
     }
     const permalink = await fetchInstagramPermalink(account, published.id);

@@ -8,6 +8,15 @@ function figmaConfig() {
   return config;
 }
 
+type FigmaRestNode = {
+  id?: string;
+  name?: string;
+  type?: string;
+  characters?: string;
+  children?: FigmaRestNode[];
+  absoluteBoundingBox?: { x?: number; y?: number; width?: number; height?: number };
+};
+
 async function figmaRequest<T>(path: string, search?: Record<string, string>): Promise<T> {
   const config = figmaConfig();
   const url = new URL(`https://api.figma.com/v1/${path.replace(/^\//, "")}`);
@@ -27,11 +36,39 @@ export async function getCurrentFigmaNodes(nodeIds: string[]) {
     name?: string;
     lastModified?: string;
     version?: string;
-    nodes?: Record<string, { document?: { id?: string; name?: string; type?: string; absoluteBoundingBox?: { width?: number; height?: number } } } | null>;
+    nodes?: Record<string, { document?: FigmaRestNode } | null>;
   }>(`files/${config.FIGMA_FILE_KEY}/nodes`, { ids: nodeIds.join(",") });
   const missing = nodeIds.filter((id) => !payload.nodes?.[id]?.document);
   if (missing.length) throw new Error(`Frames não encontrados no Figma: ${missing.join(", ")}`);
   return payload;
+}
+
+function collectNodes(node: FigmaRestNode | undefined, output: FigmaRestNode[]) {
+  if (!node) return;
+  output.push(node);
+  for (const child of node.children ?? []) collectNodes(child, output);
+}
+
+function semanticRole(name: string | undefined) {
+  const match = /^AI::([a-zA-Z]+)(?:\s*\||$)/.exec(name ?? "");
+  return match?.[1] ?? null;
+}
+
+export async function getCurrentFigmaSemanticState(nodeIds: string[]) {
+  const payload = await getCurrentFigmaNodes(nodeIds);
+  return nodeIds.map((frameId) => {
+    const root = payload.nodes?.[frameId]?.document;
+    const nodes: FigmaRestNode[] = [];
+    collectNodes(root, nodes);
+    const roles: Record<string, Array<{ id: string; name: string; text?: string; type: string }>> = {};
+    for (const node of nodes) {
+      const role = semanticRole(node.name);
+      if (!role || !node.id || !node.type) continue;
+      roles[role] ??= [];
+      roles[role].push({ id: node.id, name: node.name ?? "", text: node.characters, type: node.type });
+    }
+    return { frameId, frameName: root?.name ?? "", roles };
+  });
 }
 
 export async function getCurrentFigmaRenderUrls(nodeIds: string[], format: "png" | "jpg" = "png") {
