@@ -2,17 +2,17 @@
 
 ## Objetivo
 
-O Content Studio transforma artigos selecionados em conteúdo da Inteli Academy sem tratar a IA como uma fonte factual ou como um gerador visual sem contexto.
+O Content Studio transforma contexto, referências reais do Instagram e, opcionalmente, artigos selecionados em conteúdo da Inteli Academy sem tratar a IA como uma fonte factual ou como um gerador visual sem contexto.
 
 A ordem de autoridade é:
 
-1. post real do `@inteli.academy` escolhido pelo usuário, quando houver;
+1. conjunto de posts reais do `@inteli.academy` escolhidos pelo usuário, quando houver — todos no mesmo nível, sem um principal automático;
 2. histórico real sincronizado do `@inteli.academy`;
-3. identidade completa do Figma ID Academy;
-4. artigos selecionados + contexto específico fornecido pelo usuário;
+3. identidade completa do Figma ID Academy, com `Social Media` como principal fonte visual do Figma para formatos sociais;
+4. artigos selecionados, quando houver, como evidência factual + contexto específico fornecido pelo usuário;
 5. mídias do Drive explicitamente autorizadas para aquela geração.
 
-Os artigos são obrigatórios. Drive, contexto e post de referência são opcionais.
+Artigos, Drive, contexto e referências específicas do Instagram são opcionais. Quando nenhum artigo é selecionado, a geração não pode criar `factualClaims` nem introduzir fatos externos, números, datas, estudos, citações ou URLs sem fonte.
 
 ## Figma auditado
 
@@ -36,9 +36,9 @@ O inventário também está codificado em `lib/figma-audit.ts`.
 
 1. Abrir **Criar conteúdo**.
 2. Escolher `Post único`, `Carrossel`, `Reel` ou `Story`.
-3. Selecionar de 1 a 12 artigos.
+3. Opcionalmente selecionar até 12 artigos para fundamentar uma pauta ou fatos específicos.
 4. Opcionalmente escrever contexto específico.
-5. Opcionalmente escolher um post real sincronizado do Instagram como referência direta.
+5. Opcionalmente escolher até 8 posts reais sincronizados do Instagram como referências diretas. Os selecionados são tratados como um conjunto de referências de mesma prioridade.
 6. Opcionalmente habilitar o Drive e escolher exatamente quais imagens/vídeos podem ser usados.
 7. Gerar a V1.
 8. No workbench, pedir alterações em linguagem natural. Cada pedido cria V2/V3/... sem sobrescrever as versões anteriores.
@@ -96,7 +96,7 @@ O plugin nunca recebe `FIGMA_ACCESS_TOKEN`. Esse token é somente do servidor e 
 
 ## Instagram
 
-A conta profissional continua conectada pela área Configurações. O Content Studio sincroniza os posts recentes para `instagram_reference_posts`. A análise visual de um post é feita somente quando ele é escolhido como referência e é armazenada em cache.
+A conta profissional continua conectada pela área Configurações. O Content Studio sincroniza os posts recentes para `instagram_reference_posts`. A análise visual é feita quando um post é escolhido como referência e fica em cache. Em uma geração com múltiplas referências, o modelo procura padrões comuns e combina apenas elementos compatíveis com a identidade da Academy; nenhum post é automaticamente tratado como principal.
 
 Publicação manual do Content Studio sempre exige aprovação explícita no workbench. O pipeline semanal legado continua separado.
 
@@ -104,9 +104,11 @@ Publicação manual do Content Studio sempre exige aprovação explícita no wor
 
 - `instagram_reference_posts`: cache de posts reais e análise visual.
 - `drive_connections`: OAuth criptografado do Drive.
-- `content_projects`: brief, fontes, versão escolhida e publicação final.
+- `content_projects`: brief, artigos opcionais, lista de referências do Instagram, versão escolhida e publicação final.
 - `content_versions`: V1/V2/V3 preservadas e parent version.
 - `figma_jobs`: fila de importação do plugin e node IDs retornados.
+
+`content_projects.instagram_reference_media_ids` guarda a lista atual de referências. O campo singular legado é mantido com a primeira referência apenas para compatibilidade com projetos/versões anteriores.
 
 ## Segurança
 
@@ -115,4 +117,6 @@ Publicação manual do Content Studio sempre exige aprovação explícita no wor
 - o proxy público de vídeo do Drive exige HMAC e confirma que o arquivo pertence ao projeto;
 - o bridge do Figma exige `FIGMA_PLUGIN_SECRET`;
 - todas as tabelas do Content Studio usam RLS;
+- sem artigos, `factualClaims` devem permanecer vazias e são validadas no backend;
+- com artigos, cada `factualClaim.sourceUrl` deve pertencer exatamente ao conjunto de artigos selecionados;
 - a publicação lê o Figma novamente no momento da aprovação, evitando publicar um render antigo depois de uma edição manual.
