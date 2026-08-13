@@ -29,14 +29,14 @@ export default async function StudioProjectPage({ params }: { params: Promise<{ 
   if (articlesError) throw articlesError;
 
   const referenceIds = Array.isArray(project.instagram_reference_media_ids)
-    ? project.instagram_reference_media_ids.map(String)
+    ? project.instagram_reference_media_ids.map((id: unknown) => String(id))
     : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
   const { data: references, error: referencesError } = referenceIds.length
     ? await supabase.from("instagram_reference_posts").select("id,permalink,caption").in("id", referenceIds)
     : { data: [], error: null };
   if (referencesError) throw referencesError;
   const referenceById = new Map((references ?? []).map((reference) => [String(reference.id), reference]));
-  const orderedReferences = referenceIds.flatMap((id) => {
+  const orderedReferences = referenceIds.flatMap((id: string) => {
     const reference = referenceById.get(id);
     return reference ? [reference] : [];
   });
