@@ -29,8 +29,9 @@ import type {
 
 const createSchema = z.object({
   contentType: z.enum(["single", "carousel", "reel", "story"]),
-  articleIds: z.array(z.string().uuid()).min(1).max(12),
+  articleIds: z.array(z.string().uuid()).max(12).default([]),
   userContext: z.string().max(6000).default(""),
+  instagramReferenceMediaIds: z.array(z.string().min(1)).max(8).default([]),
   instagramReferenceMediaId: z.string().min(1).nullable().optional(),
   useDrive: z.boolean().default(false),
   driveAssetIds: z.array(z.string().min(1)).max(12).default([])
@@ -100,8 +101,7 @@ export async function syncInstagramReferences() {
   return { synced: media.length, username: account.username };
 }
 
-async function getReference(mediaId?: string | null) {
-  if (!mediaId) return null;
+async function getReference(mediaId: string) {
   const admin = createAdminClient();
   const initial = await admin.from("instagram_reference_posts").select("*").eq("id", mediaId).maybeSingle();
   if (initial.error) throw initial.error;
@@ -112,7 +112,7 @@ async function getReference(mediaId?: string | null) {
     if (retry.error) throw retry.error;
     data = retry.data;
   }
-  if (!data) throw new Error("O post de referência do Instagram não foi encontrado após sincronização.");
+  if (!data) throw new Error("Um dos posts de referência do Instagram não foi encontrado após sincronização.");
   const reference = mapReference(data as Record<string, unknown>);
   const visualAnalysis = await analyzeInstagramReferenceVisual(reference);
   if (visualAnalysis && (!reference.visualAnalysis || !Object.keys(reference.visualAnalysis).length)) {
@@ -120,6 +120,12 @@ async function getReference(mediaId?: string | null) {
     reference.visualAnalysis = visualAnalysis;
   }
   return reference;
+}
+
+async function getReferences(mediaIds: string[]) {
+  const unique = [...new Set(mediaIds)].slice(0, 8);
+  if (!unique.length) return [] as InstagramReferencePost[];
+  return Promise.all(unique.map((mediaId) => getReference(mediaId)));
 }
 
 async function historicalInstagramGuidance() {
@@ -153,6 +159,7 @@ async function historicalInstagramGuidance() {
 }
 
 async function loadArticles(articleIds: string[]): Promise<StudioArticleEvidence[]> {
+  if (!articleIds.length) return [];
   const { data, error } = await createAdminClient()
     .from("articles")
     .select("id,title,summary,canonical_url,source_name,published_at")
@@ -191,21 +198,23 @@ function assertFormatMedia(contentType: StudioContentType, assets: DriveAsset[])
 
 export async function createStudioProject(rawInput: unknown, userId: string) {
   const input = createSchema.parse(rawInput);
-  const [articles, reference, driveAssets, history] = await Promise.all([
+  const referenceIds = [...new Set([
+    ...input.instagramReferenceMediaIds,
+    ...(input.instagramReferenceMediaId ? [input.instagramReferenceMediaId] : [])
+  ])].slice(0, 8);
+  const [articles, references, driveAssets, history] = await Promise.all([
     loadArticles(input.articleIds),
-    getReference(input.instagramReferenceMediaId),
+    getReferences(referenceIds),
     loadDriveAssets(input.useDrive, input.driveAssetIds),
     historicalInstagramGuidance()
   ]);
   assertFormatMedia(input.contentType, driveAssets);
-  const referenceAnalysis = reference?.visualAnalysis ?? null;
   const payload = await generateStudioPayload({
     contentType: input.contentType,
     articles,
     userContext: input.userContext,
     driveAssets,
-    reference,
-    referenceAnalysis,
+    references,
     historicalInstagramGuidance: history
   });
 
@@ -216,7 +225,8 @@ export async function createStudioProject(rawInput: unknown, userId: string) {
     content_type: input.contentType,
     article_ids: input.articleIds,
     user_context: input.userContext,
-    instagram_reference_media_id: input.instagramReferenceMediaId ?? null,
+    instagram_reference_media_id: referenceIds[0] ?? null,
+    instagram_reference_media_ids: referenceIds,
     use_drive: input.useDrive,
     drive_assets: driveAssets,
     status: "generated"
@@ -246,9 +256,12 @@ export async function createStudioRevision(projectId: string, baseVersionId: str
   const current = studioPayloadSchema.parse(base.payload);
   const articleIds = Array.isArray(project.article_ids) ? project.article_ids.map(String) : [];
   const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : [];
-  const [articles, reference, history, latest] = await Promise.all([
+  const referenceIds = Array.isArray(project.instagram_reference_media_ids)
+    ? project.instagram_reference_media_ids.map(String).slice(0, 8)
+    : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
+  const [articles, references, history, latest] = await Promise.all([
     loadArticles(articleIds),
-    getReference(project.instagram_reference_media_id ? String(project.instagram_reference_media_id) : null),
+    getReferences(referenceIds),
     historicalInstagramGuidance(),
     admin.from("content_versions").select("version_number").eq("project_id", projectId).order("version_number", { ascending: false }).limit(1).single()
   ]);
@@ -257,8 +270,7 @@ export async function createStudioRevision(projectId: string, baseVersionId: str
     current,
     changeRequest,
     articles,
-    reference,
-    referenceAnalysis: reference?.visualAnalysis ?? null,
+    references,
     driveAssets,
     historicalInstagramGuidance: history
   });

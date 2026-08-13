@@ -39,7 +39,7 @@ export function ContentStudio({
   const [query, setQuery] = useState("");
   const [userContext, setUserContext] = useState("");
   const [references, setReferences] = useState(initialReferences);
-  const [referenceId, setReferenceId] = useState<string | null>(null);
+  const [selectedReferences, setSelectedReferences] = useState<string[]>([]);
   const [useDrive, setUseDrive] = useState(false);
   const [driveAssets, setDriveAssets] = useState<DriveAsset[]>([]);
   const [selectedAssets, setSelectedAssets] = useState<string[]>([]);
@@ -61,6 +61,10 @@ export function ContentStudio({
 
   function toggleArticle(id: string) {
     setSelectedArticles((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < 12 ? [...current, id] : current);
+  }
+
+  function toggleReference(id: string) {
+    setSelectedReferences((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < 8 ? [...current, id] : current);
   }
 
   async function syncReferences() {
@@ -105,7 +109,6 @@ export function ContentStudio({
 
   async function generate() {
     setError("");
-    if (!selectedArticles.length) return setError("Selecione pelo menos um artigo para fundamentar o conteúdo.");
     if (useDrive && !selectedAssets.length) return setError("O uso do Drive está habilitado; escolha pelo menos uma mídia.");
     if (contentType === "reel" && !selectedAssets.some((id) => driveAssets.find((asset) => asset.id === id)?.mimeType.startsWith("video/"))) {
       return setError("Reel requer um vídeo selecionado do Drive.");
@@ -119,7 +122,7 @@ export function ContentStudio({
           contentType,
           articleIds: selectedArticles,
           userContext,
-          instagramReferenceMediaId: referenceId,
+          instagramReferenceMediaIds: selectedReferences,
           useDrive,
           driveAssetIds: selectedAssets
         })
@@ -149,7 +152,7 @@ export function ContentStudio({
       </section>
 
       <section className={styles.section}>
-        <div className={styles.toolbar}><div><h2>2. Artigos</h2><p>A fonte factual obrigatória do post.</p></div><span className={styles.count}>{selectedArticles.length}/12 selecionados</span></div>
+        <div className={styles.toolbar}><div><h2>2. Artigos <small>(opcional)</small></h2><p>Selecione artigos quando quiser fundamentar fatos, números ou uma pauta específica. Sem artigos, a geração usa o contexto informado e evita criar alegações factuais externas sem fonte.</p></div><span className={styles.count}>{selectedArticles.length}/12 selecionados</span></div>
         <input className={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar artigos por título, resumo ou fonte" />
         <div className={styles.articleList}>
           {filteredArticles.map((article) => (
@@ -170,18 +173,22 @@ export function ContentStudio({
 
       <section className={styles.section}>
         <div className={styles.toolbar}>
-          <div><h2>4. Post real do Instagram como referência <small>(opcional)</small></h2><p>Quando escolhido, este post tem prioridade de estilo sobre o histórico geral.</p></div>
-          <button className={styles.secondary} type="button" disabled={syncingInstagram} onClick={syncReferences}>{syncingInstagram ? "Sincronizando…" : "Sincronizar @inteli.academy"}</button>
+          <div><h2>4. Posts reais do Instagram como referência <small>(opcional)</small></h2><p>Você pode escolher vários posts. Eles formam juntos a referência visual/editorial prioritária; o sistema combina os padrões compatíveis entre eles.</p></div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span className={styles.count}>{selectedReferences.length}/8 selecionados</span>
+            <button className={styles.secondary} type="button" disabled={syncingInstagram} onClick={syncReferences}>{syncingInstagram ? "Sincronizando…" : "Sincronizar @inteli.academy"}</button>
+          </div>
         </div>
         <div className={styles.referenceGrid}>
-          <button type="button" className={`${styles.reference} ${referenceId === null ? styles.referenceActive : ""}`} onClick={() => setReferenceId(null)}>
-            <div className={styles.referenceImage} /><div className={styles.referenceBody}><strong>Sem referência específica</strong><span>Usar o histórico real completo + identidade do Figma.</span></div>
+          <button type="button" className={`${styles.reference} ${selectedReferences.length === 0 ? styles.referenceActive : ""}`} onClick={() => setSelectedReferences([])}>
+            <div className={styles.referenceImage} /><div className={styles.referenceBody}><strong>Sem referências específicas</strong><span>Usar o histórico real completo + Social Media como principal fonte visual do Figma.</span></div>
           </button>
           {references.map((reference) => {
             const image = reference.thumbnail_url ?? reference.media_url;
-            return <button type="button" key={reference.id} className={`${styles.reference} ${referenceId === reference.id ? styles.referenceActive : ""}`} onClick={() => setReferenceId(reference.id)}>
+            const active = selectedReferences.includes(reference.id);
+            return <button type="button" key={reference.id} className={`${styles.reference} ${active ? styles.referenceActive : ""}`} onClick={() => toggleReference(reference.id)} aria-pressed={active}>
               <div className={styles.referenceImage} style={image ? { backgroundImage: `url(${JSON.stringify(image).slice(1, -1)})` } : undefined} />
-              <div className={styles.referenceBody}><strong>{reference.media_product_type ?? reference.media_type} · {new Date(reference.media_timestamp).toLocaleDateString("pt-BR")}</strong><span>{reference.caption || "Sem legenda"}</span></div>
+              <div className={styles.referenceBody}><strong>{active ? "✓ " : ""}{reference.media_product_type ?? reference.media_type} · {new Date(reference.media_timestamp).toLocaleDateString("pt-BR")}</strong><span>{reference.caption || "Sem legenda"}</span></div>
             </button>;
           })}
         </div>
@@ -205,7 +212,7 @@ export function ContentStudio({
       </section>
 
       <div className={styles.footer}>
-        <div><strong>Pronto para gerar a V1</strong><div className={styles.count}>{selectedArticles.length} artigo(s) · {referenceId ? "referência específica" : "histórico geral"} · {selectedAssets.length} mídia(s) do Drive</div>{error ? <div className={styles.feedback}>{error}</div> : null}</div>
+        <div><strong>Pronto para gerar a V1</strong><div className={styles.count}>{selectedArticles.length} artigo(s) · {selectedReferences.length ? `${selectedReferences.length} referência(s) específica(s)` : "histórico geral"} · {selectedAssets.length} mídia(s) do Drive</div>{error ? <div className={styles.feedback}>{error}</div> : null}</div>
         <button className={styles.primary} type="button" disabled={generating} onClick={generate}>{generating ? "Gerando…" : "Gerar versão visual"}</button>
       </div>
     </div>

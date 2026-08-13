@@ -31,7 +31,7 @@ type Project = {
 
 type Provenance = {
   articles: Array<{ id: string; title: string; source_name: string; canonical_url: string }>;
-  reference: { id: string; permalink: string; caption: string } | null;
+  references: Array<{ id: string; permalink: string; caption: string }>;
   userContext: string;
 };
 
@@ -141,7 +141,7 @@ export function ContentWorkbench({ project, versions, provenance }: { project: P
         {project.status !== "published" ? <section className={styles.card}>
           <h3>Pedir alterações e gerar outra versão</h3>
           <p>Descreva mudanças visuais ou editoriais. A versão atual nunca é sobrescrita; a próxima será criada separadamente.</p>
-          <textarea className={styles.textarea} value={changeRequest} onChange={(event) => setChangeRequest(event.target.value)} placeholder="Ex.: deixe a capa mais minimalista, use a segunda imagem do Drive na página 3, reduza o texto e aproxime a composição do post de referência…" />
+          <textarea className={styles.textarea} value={changeRequest} onChange={(event) => setChangeRequest(event.target.value)} placeholder="Ex.: deixe a capa mais minimalista, use a segunda imagem do Drive na página 3, reduza o texto e aproxime a composição dos posts de referência…" />
           <div className={styles.actions}><button className={styles.primary} type="button" onClick={revise} disabled={busy !== "" || !changeRequest.trim()}>{busy === "revise" ? "Gerando V nova…" : `Gerar a partir da V${selected.version_number}`}</button></div>
         </section> : null}
 
@@ -157,9 +157,10 @@ export function ContentWorkbench({ project, versions, provenance }: { project: P
         <section className={styles.card}>
           <h3>Rastreabilidade</h3>
           <div className={styles.provenance}>
-            <div><strong>Artigos:</strong> {provenance.articles.map((article) => article.title).join(" · ")}</div>
+            <div><strong>Artigos:</strong> {provenance.articles.length ? provenance.articles.map((article) => article.title).join(" · ") : "não utilizados"}</div>
             <div><strong>Contexto específico:</strong> {provenance.userContext || "não informado"}</div>
-            <div><strong>Referência do Instagram:</strong> {provenance.reference ? <a href={provenance.reference.permalink} target="_blank" rel="noreferrer">post selecionado ↗</a> : "histórico geral"}</div>
+            <div><strong>Referências do Instagram:</strong> {provenance.references.length ? provenance.references.map((reference, index) => <span key={reference.id}>{index ? " · " : ""}<a href={reference.permalink} target="_blank" rel="noreferrer">post {index + 1} ↗</a></span>) : "histórico geral"}</div>
+            <div><strong>Referência visual do Figma:</strong> Social Media é a principal para conteúdo social; as demais páginas auditadas complementam a identidade.</div>
             <div><strong>Drive:</strong> {project.drive_assets.length ? project.drive_assets.map((asset) => asset.name).join(" · ") : "não utilizado"}</div>
             <div><strong>Versões:</strong> {versions.length} preservada(s)</div>
             <div><strong>Frames Figma:</strong> {project.figma_frame_ids?.length ? project.figma_frame_ids.join(", ") : "ainda não importados"}</div>

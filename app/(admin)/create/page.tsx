@@ -15,7 +15,7 @@ export default async function CreateContentPage() {
         <div>
           <span className="eyebrow">Content Studio</span>
           <h1>Criar publicação</h1>
-          <p>Escolha o formato, as evidências, uma referência real do Instagram e as mídias autorizadas. Depois da V1 você poderá gerar quantas variações quiser antes de mandar uma única versão ao Figma.</p>
+          <p>Escolha o formato e, se fizer sentido para a pauta, adicione artigos, contexto, vários posts reais do Instagram como referências e mídias do Drive. Depois da V1 você poderá gerar quantas variações quiser antes de mandar uma única versão ao Figma.</p>
         </div>
       </header>
       <ContentStudio
