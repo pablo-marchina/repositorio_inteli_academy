@@ -127,7 +127,10 @@ export function createAfterEffectsScript(input: {
     return [`
   (function () {
     var file = new File(root.fsName + ${jsxString(`/${file.relativePath}`)});
-    if (!file.exists) throw new Error("Asset ausente: " + file.fsName);
+    if (!file.exists) {
+      file = File.openDialog(${jsxString(`Localize a mídia: ${file.asset.name}`)});
+    }
+    if (!file || !file.exists) throw new Error(${jsxString(`Mídia obrigatória não localizada: ${file.asset.name}`)});
     var imported = app.project.importFile(new ImportOptions(file));
     var layer = comp.layers.add(imported);
     layer.name = ${jsxString(`${track.kind.toUpperCase()} • ${track.role} • ${file.asset.name}`)};
@@ -246,5 +249,5 @@ export function packageAssetPath(asset: DriveAsset) {
 }
 
 export function afterEffectsReadme(versionNumber: number) {
-  return `INTELI ACADEMY — AFTER EFFECTS EDITABLE PACKAGE\n\n1. Extraia este .tar.gz preservando as pastas.\n2. No After Effects, use File > Scripts > Run Script File.\n3. Execute InteliAcademy-V${versionNumber}.jsx.\n4. O script cria e salva InteliAcademy-V${versionNumber}.aep na mesma pasta.\n\nO projeto cria footage e textos em layers separados. A arte do Figma é incluída em SVG e importada como composição quando a versão do After Effects oferece suporte, permitindo editar seus elementos vetoriais. O frame completo aprovado também fica no projeto como reference layer desabilitada para conferência pixel-a-pixel.\n\nNão mova a pasta assets antes da primeira execução do script. Depois que o .aep for criado, use File > Dependencies > Collect Files se quiser relocar o projeto com todas as mídias.\n`;
+  return `INTELI ACADEMY — AFTER EFFECTS EDITABLE PACKAGE\n\n1. Extraia este .tar.gz preservando as pastas.\n2. No After Effects, use File > Scripts > Run Script File.\n3. Execute InteliAcademy-V${versionNumber}.jsx.\n4. O script cria e salva InteliAcademy-V${versionNumber}.aep na mesma pasta.\n\nO projeto cria footage e textos em layers separados. A arte do Figma é incluída em SVG e importada como composição quando a versão do After Effects oferece suporte, permitindo editar seus elementos vetoriais. O frame completo aprovado também fica no projeto como reference layer desabilitada para conferência pixel-a-pixel.\n\nMídias pequenas podem vir dentro de assets/. Para evitar pacotes excessivamente grandes, mídias acima do limite do servidor não são embutidas; nesse caso o script abre um seletor para você localizar o arquivo original local. Depois que o .aep for criado, use File > Dependencies > Collect Files se quiser relocar o projeto com todas as mídias.\n`;
 }
