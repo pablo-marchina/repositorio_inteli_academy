@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { ContentWorkbench } from "@/components/ContentWorkbench";
+import { StructuredStudioPanel } from "@/components/StructuredStudioPanel";
 import { requireAdmin } from "@/lib/auth";
 import { studioPayloadSchema } from "@/lib/studio-ai";
 import type { StructuredStudioPayload } from "@/lib/studio-artifact";
@@ -75,6 +76,12 @@ export default async function StudioProjectPage({ params }: { params: Promise<{ 
           <p>Compare versões estruturadas, refine por linguagem natural, edite no Figma sem perder a identidade e publique somente depois da revisão final.</p>
         </div>
       </header>
+      <StructuredStudioPanel
+        projectId={normalizedProject.id}
+        driveAssets={normalizedProject.drive_assets}
+        versions={versions}
+        initialVersionId={normalizedProject.selected_version_id}
+      />
       <ContentWorkbench
         project={normalizedProject}
         versions={versions}
