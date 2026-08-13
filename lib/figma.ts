@@ -15,6 +15,13 @@ type FigmaRestNode = {
   characters?: string;
   children?: FigmaRestNode[];
   absoluteBoundingBox?: { x?: number; y?: number; width?: number; height?: number };
+  style?: {
+    fontFamily?: string;
+    fontSize?: number;
+    fontWeight?: number;
+    textAlignHorizontal?: string;
+    lineHeightPx?: number;
+  };
 };
 
 async function figmaRequest<T>(path: string, search?: Record<string, string>): Promise<T> {
@@ -58,16 +65,44 @@ export async function getCurrentFigmaSemanticState(nodeIds: string[]) {
   const payload = await getCurrentFigmaNodes(nodeIds);
   return nodeIds.map((frameId) => {
     const root = payload.nodes?.[frameId]?.document;
+    const frameBox = root?.absoluteBoundingBox;
     const nodes: FigmaRestNode[] = [];
     collectNodes(root, nodes);
-    const roles: Record<string, Array<{ id: string; name: string; text?: string; type: string }>> = {};
+    const roles: Record<string, Array<{
+      id: string;
+      name: string;
+      text?: string;
+      type: string;
+      box?: { x: number; y: number; width: number; height: number };
+      style?: FigmaRestNode["style"];
+    }>> = {};
     for (const node of nodes) {
       const role = semanticRole(node.name);
       if (!role || !node.id || !node.type) continue;
       roles[role] ??= [];
-      roles[role].push({ id: node.id, name: node.name ?? "", text: node.characters, type: node.type });
+      const box = node.absoluteBoundingBox && frameBox
+        ? {
+            x: (node.absoluteBoundingBox.x ?? 0) - (frameBox.x ?? 0),
+            y: (node.absoluteBoundingBox.y ?? 0) - (frameBox.y ?? 0),
+            width: node.absoluteBoundingBox.width ?? 0,
+            height: node.absoluteBoundingBox.height ?? 0
+          }
+        : undefined;
+      roles[role].push({
+        id: node.id,
+        name: node.name ?? "",
+        text: node.characters,
+        type: node.type,
+        box,
+        style: node.style
+      });
     }
-    return { frameId, frameName: root?.name ?? "", roles };
+    return {
+      frameId,
+      frameName: root?.name ?? "",
+      frameBox: frameBox ? { width: frameBox.width ?? 0, height: frameBox.height ?? 0 } : undefined,
+      roles
+    };
   });
 }
 
@@ -80,7 +115,9 @@ export async function getCurrentFigmaRenderUrls(nodeIds: string[], format: "png"
     {
       ids: nodeIds.join(","),
       format,
-      ...(format === "svg" ? { svg_include_id: "true" } : { scale: "1" })
+      ...(format === "svg"
+        ? { svg_include_id: "true", svg_outline_text: "false", svg_simplify_stroke: "false" }
+        : { scale: "1" })
     }
   );
   if (payload.err) throw new Error(payload.err);
