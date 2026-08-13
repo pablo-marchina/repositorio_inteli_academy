@@ -11,6 +11,7 @@ type StructuredVersion = {
   version_number: number;
   payload: StructuredStudioPayload;
   status: string;
+  figma_frame_ids: string[];
 };
 
 function Score({ title, report }: { title: string; report: StudioBrandReport }) {
@@ -36,6 +37,7 @@ export function StructuredStudioPanel({ projectId, driveAssets, versions, initia
   if (!selected?.payload.artifact) return null;
   const artifact = selected.payload.artifact;
   const exportBase = `/api/studio/${projectId}/versions/${selected.id}/export`;
+  const afterEffectsUrl = `/api/studio/${projectId}/versions/${selected.id}/after-effects`;
 
   return (
     <section className={styles.card} style={{ marginBottom: 20 }}>
@@ -59,10 +61,12 @@ export function StructuredStudioPanel({ projectId, driveAssets, versions, initia
         <div><h3>Timeline de vídeo editável</h3><p>Remotion faz o preview temporal; footage, texto e gráficos continuam como tracks independentes no projeto estruturado.</p></div>
         <StudioVideoPreview payload={selected.payload} timeline={artifact.videoTimeline} driveAssets={driveAssets} />
         <div className={styles.actions}>
-          <a className={styles.primary} href={`${exportBase}?format=otio`}>Baixar OTIO</a>
-          <a className={styles.secondary} href={`${exportBase}?format=manifest`}>Baixar manifest do editor</a>
+          {selected.figma_frame_ids.length ? <a className={styles.primary} href={afterEffectsUrl}>Baixar projeto editável · After Effects</a> : null}
+          <a className={styles.secondary} href={`${exportBase}?format=otio`}>Baixar OTIO</a>
+          <a className={styles.secondary} href={`${exportBase}?format=manifest`}>Baixar manifest</a>
         </div>
-        <p style={{ fontSize: 13, opacity: .7 }}>O OTIO carrega a estrutura editorial, timing, tracks, mídia e metadata. O manifest preserva também os textos nativos desejados, papéis semânticos, Scene Graph e vínculos com nodes do Figma para adapters específicos dos editores.</p>
+        {!selected.figma_frame_ids.length ? <p style={{ fontSize: 13, opacity: .72 }}>O export nativo do After Effects aparece depois que a versão passa pelo Figma, porque ele usa o frame visual final aprovado como fonte vetorial.</p> : null}
+        <p style={{ fontSize: 13, opacity: .7 }}>No pacote do After Effects, footage e textos viram layers independentes e o Figma entra em SVG como composição vetorial editável. OTIO continua disponível como formato universal de timeline e o manifest preserva Scene Graph e vínculos semânticos.</p>
       </div> : null}
     </section>
   );
