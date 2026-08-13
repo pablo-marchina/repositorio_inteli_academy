@@ -71,13 +71,17 @@ export async function getCurrentFigmaSemanticState(nodeIds: string[]) {
   });
 }
 
-export async function getCurrentFigmaRenderUrls(nodeIds: string[], format: "png" | "jpg" = "png") {
+export async function getCurrentFigmaRenderUrls(nodeIds: string[], format: "png" | "jpg" | "svg" = "png") {
   if (!nodeIds.length) throw new Error("Nenhum frame do Figma foi associado a esta versão.");
   const config = figmaConfig();
   await getCurrentFigmaNodes(nodeIds);
   const payload = await figmaRequest<{ images?: Record<string, string | null>; err?: string }>(
     `images/${config.FIGMA_FILE_KEY}`,
-    { ids: nodeIds.join(","), format, scale: "1" }
+    {
+      ids: nodeIds.join(","),
+      format,
+      ...(format === "svg" ? { svg_include_id: "true" } : { scale: "1" })
+    }
   );
   if (payload.err) throw new Error(payload.err);
   const urls = nodeIds.map((id) => payload.images?.[id] ?? null);
