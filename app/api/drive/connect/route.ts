@@ -9,10 +9,15 @@ export async function GET(request: Request) {
   const payload = `${auth.user.id}:${Date.now()}`;
   const state = `${Buffer.from(payload).toString("base64url")}.${signPublicAsset(payload)}`;
   try {
-    return NextResponse.redirect(googleDriveAuthorizationUrl(state));
+    const authorizationUrl = googleDriveAuthorizationUrl(state);
+    console.info("[drive-oauth] redirecting to Google authorization", {
+      callback: new URL(authorizationUrl).searchParams.get("redirect_uri")
+    });
+    return NextResponse.redirect(authorizationUrl);
   } catch (error) {
+    console.error("[drive-oauth] failed to start authorization", error);
     const url = new URL("/settings", request.url);
-    url.searchParams.set("drive_error", String(error));
+    url.searchParams.set("drive_error", error instanceof Error ? error.message : String(error));
     return NextResponse.redirect(url);
   }
 }
