@@ -3,41 +3,78 @@ import { decryptSecret } from "@/lib/crypto";
 import { parseInsights } from "@/lib/metrics";
 import type { EngagementMetrics, InstagramAccount, InstagramReferencePost } from "@/lib/types";
 
+const INSTAGRAM_SCOPES = [
+  "instagram_business_basic",
+  "instagram_business_content_publish",
+  "instagram_business_manage_insights"
+] as const;
+
 function config() {
   const values = env();
-  if (!values.META_APP_ID || !values.META_APP_SECRET) {
-    throw new Error("META_APP_ID and META_APP_SECRET are required to connect Instagram.");
+  const hasDedicated = Boolean(values.INSTAGRAM_APP_ID || values.INSTAGRAM_APP_SECRET);
+  const appId = hasDedicated ? values.INSTAGRAM_APP_ID : values.META_APP_ID;
+  const appSecret = hasDedicated ? values.INSTAGRAM_APP_SECRET : values.META_APP_SECRET;
+  if (!appId || !appSecret) {
+    throw new Error(
+      hasDedicated
+        ? "Configure INSTAGRAM_APP_ID e INSTAGRAM_APP_SECRET juntos na Vercel."
+        : "Configure INSTAGRAM_APP_ID e INSTAGRAM_APP_SECRET com as credenciais do Instagram App no Meta App Dashboard."
+    );
   }
   return {
     ...values,
-    META_APP_ID: values.META_APP_ID,
-    META_APP_SECRET: values.META_APP_SECRET
+    APP_ID: appId,
+    APP_SECRET: appSecret,
+    credentialSource: hasDedicated ? "instagram" as const : "legacy-meta" as const
+  };
+}
+
+export function instagramCallbackUrl() {
+  return `${env().NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/api/instagram/callback`;
+}
+
+export function instagramIntegrationSummary() {
+  const values = env();
+  const hasDedicated = Boolean(values.INSTAGRAM_APP_ID && values.INSTAGRAM_APP_SECRET);
+  const hasLegacy = Boolean(values.META_APP_ID && values.META_APP_SECRET);
+  const appId = values.INSTAGRAM_APP_ID ?? values.META_APP_ID ?? "";
+  return {
+    configured: hasDedicated || hasLegacy,
+    credentialSource: hasDedicated ? "Instagram App ID/Secret" : hasLegacy ? "META_* legado" : "não configurado",
+    appIdTail: appId ? appId.slice(-6) : null,
+    callbackUrl: instagramCallbackUrl(),
+    businessLoginUrlConfigured: Boolean(values.INSTAGRAM_BUSINESS_LOGIN_URL),
+    graphVersion: values.META_GRAPH_VERSION,
+    scopes: [...INSTAGRAM_SCOPES]
   };
 }
 
 export function instagramAuthorizationUrl(state: string) {
   const values = config();
-  const url = new URL("https://www.instagram.com/oauth/authorize");
-  url.searchParams.set("enable_fb_login", "0");
-  url.searchParams.set("force_authentication", "1");
-  url.searchParams.set("client_id", values.META_APP_ID);
-  url.searchParams.set("redirect_uri", `${values.NEXT_PUBLIC_APP_URL}/api/instagram/callback`);
+  const callbackUrl = instagramCallbackUrl();
+  const url = values.INSTAGRAM_BUSINESS_LOGIN_URL
+    ? new URL(values.INSTAGRAM_BUSINESS_LOGIN_URL)
+    : new URL("https://www.instagram.com/oauth/authorize");
+
+  url.searchParams.set("client_id", values.APP_ID);
+  url.searchParams.set("redirect_uri", callbackUrl);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set(
-    "scope",
-    "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights"
-  );
+  url.searchParams.set("scope", INSTAGRAM_SCOPES.join(","));
   url.searchParams.set("state", state);
+  url.searchParams.set("force_authentication", "1");
+  // Business Login for Instagram supports showing the Facebook/Meta login option.
+  // Leaving it enabled is more robust for professional accounts managed through Meta.
+  url.searchParams.set("enable_fb_login", "1");
   return url.toString();
 }
 
 export async function exchangeInstagramCode(code: string) {
   const values = config();
   const form = new URLSearchParams({
-    client_id: values.META_APP_ID,
-    client_secret: values.META_APP_SECRET,
+    client_id: values.APP_ID,
+    client_secret: values.APP_SECRET,
     grant_type: "authorization_code",
-    redirect_uri: `${values.NEXT_PUBLIC_APP_URL}/api/instagram/callback`,
+    redirect_uri: instagramCallbackUrl(),
     code
   });
 
@@ -52,7 +89,7 @@ export async function exchangeInstagramCode(code: string) {
 
   const longUrl = new URL("https://graph.instagram.com/access_token");
   longUrl.searchParams.set("grant_type", "ig_exchange_token");
-  longUrl.searchParams.set("client_secret", values.META_APP_SECRET);
+  longUrl.searchParams.set("client_secret", values.APP_SECRET);
   longUrl.searchParams.set("access_token", short.access_token);
   const longResponse = await fetch(longUrl, { cache: "no-store" });
   if (!longResponse.ok) throw new Error(`Long-lived token exchange failed: ${await longResponse.text()}`);

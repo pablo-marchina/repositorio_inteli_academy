@@ -15,6 +15,15 @@ const serverSchema = z.object({
   GEMINI_POST_MODEL: z.string().min(1).default("gemini-3.6-flash"),
   GEMINI_FILTER_MODEL: z.string().min(1).default("gemini-3.5-flash-lite"),
   GEMINI_FALLBACK_MODELS: z.string().default("gemini-3.5-flash,gemini-3.5-flash-lite"),
+  // Preferred credentials for Instagram API with Instagram Login. These are the
+  // Instagram App ID / App Secret shown inside the Instagram product setup.
+  INSTAGRAM_APP_ID: z.string().min(1).optional(),
+  INSTAGRAM_APP_SECRET: z.string().min(1).optional(),
+  // Optional exact Business Login embed URL copied from Meta App Dashboard.
+  INSTAGRAM_BUSINESS_LOGIN_URL: z.string().url().optional(),
+  // Legacy aliases kept so existing deployments do not break. New setups should
+  // use INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET to avoid confusing the Meta App
+  // credentials with the Instagram App credentials.
   META_APP_ID: z.string().min(1).optional(),
   META_APP_SECRET: z.string().min(1).optional(),
   META_GRAPH_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v26.0"),
