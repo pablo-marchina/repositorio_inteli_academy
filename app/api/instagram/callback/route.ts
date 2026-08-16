@@ -44,6 +44,7 @@ export async function GET(request: Request) {
     if (error) throw error;
     destination.searchParams.set("instagram", "connected");
   } catch (error) {
+    console.error("[instagram-oauth] callback failed", String(error));
     destination.searchParams.set("instagram_error", String(error));
   }
   return NextResponse.redirect(destination);
