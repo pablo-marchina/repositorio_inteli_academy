@@ -11,6 +11,7 @@ export async function GET(request: Request) {
   try {
     return NextResponse.redirect(instagramAuthorizationUrl(state));
   } catch (error) {
+    console.error("[instagram-oauth] connect failed", String(error));
     const url = new URL("/settings", request.url);
     url.searchParams.set("instagram_error", String(error));
     return NextResponse.redirect(url);
