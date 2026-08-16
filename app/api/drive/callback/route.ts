@@ -26,9 +26,12 @@ export async function GET(request: Request) {
     if (!parsed) throw new Error("Estado OAuth do Drive inválido ou expirado.");
     const tokens = await exchangeGoogleDriveCode(code);
     await saveDriveConnection({ ...tokens, connectedBy: parsed.userId });
+    console.info("[drive-oauth] connection stored", { email: tokens.email ?? null });
     destination.searchParams.set("drive", "connected");
   } catch (error) {
-    destination.searchParams.set("drive_error", String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[drive-oauth] callback failed", { message });
+    destination.searchParams.set("drive_error", message);
   }
   return NextResponse.redirect(destination);
 }
