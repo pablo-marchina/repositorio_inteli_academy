@@ -1,8 +1,13 @@
 import { assertFigmaBridgeSecret } from "@/lib/figma";
+import { FIGMA_BRIDGE_CORS_HEADERS, figmaBridgeOptions } from "@/lib/figma-bridge-http";
 import { downloadDriveAsset } from "@/lib/google-drive";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const maxDuration = 120;
+
+export function OPTIONS() {
+  return figmaBridgeOptions();
+}
 
 export async function GET(request: Request, context: { params: Promise<{ fileId: string }> }) {
   try {
@@ -16,8 +21,14 @@ export async function GET(request: Request, context: { params: Promise<{ fileId:
     if (!payload?.driveAssets?.some((asset) => asset.id === fileId)) throw new Error("Asset não pertence a este job do Figma.");
     const { asset, bytes } = await downloadDriveAsset(fileId);
     if (!asset.mimeType.startsWith("image/")) throw new Error("O plugin visual importa imagens; vídeos permanecem como mídia principal do Reel.");
-    return new Response(bytes, { headers: { "content-type": asset.mimeType, "cache-control": "private, max-age=300" } });
+    return new Response(bytes, {
+      headers: {
+        ...FIGMA_BRIDGE_CORS_HEADERS,
+        "content-type": asset.mimeType,
+        "cache-control": "private, max-age=300"
+      }
+    });
   } catch (error) {
-    return new Response(String(error), { status: 403 });
+    return new Response(String(error), { status: 403, headers: FIGMA_BRIDGE_CORS_HEADERS });
   }
 }
