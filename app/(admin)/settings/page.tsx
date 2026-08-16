@@ -3,10 +3,17 @@ import { InviteUserForm } from "@/components/InviteUserForm";
 import { ScheduleForm } from "@/components/ScheduleForm";
 import { requireAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { instagramIntegrationSummary } from "@/lib/instagram";
 
-export default async function SettingsPage() {
+type SettingsSearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function SettingsPage({ searchParams }: { searchParams: SettingsSearchParams }) {
   const { supabase } = await requireAdmin();
   const config = env();
+  const params = await searchParams;
+  const instagramError = typeof params.instagram_error === "string" ? params.instagram_error : null;
+  const instagramConnected = params.instagram === "connected";
+  const instagramConfig = instagramIntegrationSummary();
   const [account, settings, users, drive] = await Promise.all([
     supabase.from("instagram_accounts").select("username,account_type,token_expires_at").eq("is_active", true).order("connected_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("app_settings").select("timezone,publish_weekday,publish_hour,generation_lead_hours,auto_publish").eq("id", true).single(),
@@ -26,8 +33,29 @@ export default async function SettingsPage() {
       <section className="settings-stack">
         <article className="card">
           <h2>Instagram</h2>
+          {instagramConnected ? <p className="feedback success">Instagram conectado com sucesso.</p> : null}
+          {instagramError ? <p className="feedback error"><strong>Falha ao conectar:</strong> {instagramError}</p> : null}
           <InstagramConnectionCard account={account.data ?? null} />
-          <div className="code-note">Para usar posts reais como referências e publicar pelo Content Studio, reconecte a conta se ela tiver sido autorizada antes da permissão de Insights ser adicionada.</div>
+          <div className="list section">
+            <div className="list-row">
+              <div><h3>Credenciais OAuth</h3><p>Use o Instagram App ID e o Instagram App Secret do produto Instagram no Meta App Dashboard.</p></div>
+              <span className={instagramConfig.configured ? "badge success" : "badge failed"}>{instagramConfig.configured ? instagramConfig.credentialSource : "não configurado"}</span>
+            </div>
+            <div className="list-row">
+              <div><h3>Business Login</h3><p>Login direto do Instagram com opção de autenticação pela conta Facebook/Meta habilitada.</p></div>
+              <span className="badge">{instagramConfig.businessLoginUrlConfigured ? "embed URL configurada" : "URL gerada pelo app"}</span>
+            </div>
+            <div className="list-row">
+              <div><h3>Graph API</h3><p>{instagramConfig.scopes.join(" · ")}</p></div>
+              <span className="badge">{instagramConfig.graphVersion}</span>
+            </div>
+          </div>
+          <div className="code-note">
+            Callback OAuth exato para cadastrar no Meta App Dashboard:<br />
+            <code>{instagramConfig.callbackUrl}</code>
+            {instagramConfig.appIdTail ? <><br />App ID configurado termina em <code>{instagramConfig.appIdTail}</code>.</> : null}
+          </div>
+          <div className="code-note">A conta precisa ser Business ou Creator. Para testes com Standard Access, use uma conta profissional que você gerencia e que esteja adicionada ao app; para contas externas, o app precisa do acesso correspondente aprovado pela Meta.</div>
         </article>
 
         <article className="card">
