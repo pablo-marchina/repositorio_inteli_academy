@@ -14,41 +14,99 @@
     button:disabled { opacity: .55; cursor: wait; }
     .status { margin-top: 18px; padding: 12px; border-radius: 8px; background: var(--figma-color-bg-secondary); white-space: pre-wrap; }
     .hint { margin-top: 18px; font-size: 12px; color: var(--figma-color-text-tertiary); }
+    .connected { color: #14a44d; font-weight: 700; margin-top: 10px; }
   </style>
 </head>
 <body>
   <h1>Inteli Academy Content Bridge</h1>
-  <p>Importa somente a versão que foi escolhida na plataforma e a transforma em frames editáveis.</p>
+  <p>Conecte este plugin ao Content Studio e importe somente a versão escolhida, mantendo os frames editáveis.</p>
+
   <label for="url">URL da plataforma</label>
-  <input id="url" placeholder="https://academy-content.vercel.app" />
-  <label for="secret">Segredo do bridge</label>
-  <input id="secret" type="password" autocomplete="off" placeholder="FIGMA_PLUGIN_SECRET" />
-  <button id="import">Importar próxima versão escolhida</button>
-  <div class="status" id="status">Nenhuma operação iniciada.</div>
-  <div class="hint">Depois de editar os frames no Figma, volte à plataforma e clique em “Aprovar e publicar”. O backend exportará os node IDs atuais — não uma cópia antiga.</div>
+  <input id="url" value="https://repositorio-inteli-academy-one.vercel.app" />
+
+  <label for="pairing">Código de pareamento</label>
+  <input id="pairing" autocomplete="off" placeholder="ABCD-EFGH-IJKL" />
+  <div class="connected" id="connected" hidden>✓ Plugin já pareado neste computador.</div>
+
+  <button id="import">Conectar e importar próxima versão</button>
+  <div class="status" id="status">Abra Configurações → Figma no Content Studio para copiar um código de pareamento temporário.</div>
+  <div class="hint">O código de pareamento é temporário e nunca revela o segredo interno do servidor. Depois do primeiro pareamento, o token fica salvo somente no armazenamento local do plugin. Se a credencial expirar, gere outro código em Configurações.</div>
+
   <script>
     const url = document.getElementById('url');
-    const secret = document.getElementById('secret');
+    const pairing = document.getElementById('pairing');
     const button = document.getElementById('import');
     const status = document.getElementById('status');
+    const connected = document.getElementById('connected');
+    let bridgeToken = '';
+
     parent.postMessage({ pluginMessage: { type: 'load-config' } }, '*');
-    button.onclick = () => {
+
+    pairing.addEventListener('input', () => {
+      if (pairing.value.trim()) {
+        bridgeToken = '';
+        connected.hidden = true;
+        button.textContent = 'Conectar e importar próxima versão';
+      }
+    });
+
+    async function exchangePairingCode(baseUrl, code) {
+      const response = await fetch(`${baseUrl}/api/figma/bridge/pair`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.token) throw new Error(payload.error || `Pareamento falhou (${response.status}).`);
+      return payload.token;
+    }
+
+    button.onclick = async () => {
+      const baseUrl = url.value.trim().replace(/\/$/, '');
+      if (!/^https?:\/\//.test(baseUrl)) {
+        status.textContent = 'Erro: informe uma URL válida da plataforma.';
+        return;
+      }
       button.disabled = true;
-      status.textContent = 'Importando…';
-      parent.postMessage({ pluginMessage: { type: 'import-next', platformUrl: url.value, secret: secret.value } }, '*');
+      status.textContent = bridgeToken ? 'Importando…' : 'Pareando com o Content Studio…';
+      try {
+        const credential = bridgeToken || await exchangePairingCode(baseUrl, pairing.value.trim());
+        bridgeToken = credential;
+        pairing.value = '';
+        connected.hidden = false;
+        button.textContent = 'Importar próxima versão escolhida';
+        status.textContent = 'Conectado. Buscando próxima versão…';
+        parent.postMessage({ pluginMessage: { type: 'import-next', platformUrl: baseUrl, secret: credential } }, '*');
+      } catch (error) {
+        button.disabled = false;
+        status.textContent = `Erro: ${String(error)}`;
+      }
     };
+
     onmessage = (event) => {
       const message = event.data.pluginMessage;
       if (!message) return;
       if (message.type === 'config' && message.value) {
-        url.value = message.value.platformUrl || '';
-        secret.value = message.value.secret || '';
+        url.value = message.value.platformUrl || url.value;
+        if (String(message.value.secret || '').startsWith('v1.')) {
+          bridgeToken = message.value.secret;
+          connected.hidden = false;
+          button.textContent = 'Importar próxima versão escolhida';
+          status.textContent = 'Plugin já pareado. Você pode importar a próxima versão.';
+        }
         return;
       }
       button.disabled = false;
       if (message.type === 'success') status.textContent = `✓ ${message.message}\nFrames: ${message.frameIds.join(', ')}`;
-      else if (message.type === 'empty') status.textContent = 'Não há versões aguardando importação.';
-      else if (message.type === 'error') status.textContent = `Erro: ${message.message}`;
+      else if (message.type === 'empty') status.textContent = 'Conectado. Não há versões aguardando importação.';
+      else if (message.type === 'error') {
+        status.textContent = `Erro: ${message.message}`;
+        if (/credencial|expirad/i.test(message.message || '')) {
+          bridgeToken = '';
+          connected.hidden = true;
+          button.textContent = 'Conectar e importar próxima versão';
+        }
+      }
     };
   </script>
 </body>

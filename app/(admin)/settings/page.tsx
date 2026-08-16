@@ -3,6 +3,7 @@ import { InviteUserForm } from "@/components/InviteUserForm";
 import { ScheduleForm } from "@/components/ScheduleForm";
 import { requireAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { figmaIntegrationSummary, verifyFigmaReadAccess } from "@/lib/figma";
 import { instagramIntegrationSummary } from "@/lib/instagram";
 
 type SettingsSearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -13,7 +14,17 @@ export default async function SettingsPage({ searchParams }: { searchParams: Set
   const params = await searchParams;
   const instagramError = typeof params.instagram_error === "string" ? params.instagram_error : null;
   const instagramConnected = params.instagram === "connected";
+  const driveError = typeof params.drive_error === "string" ? params.drive_error : null;
+  const driveConnected = params.drive === "connected";
   const instagramConfig = instagramIntegrationSummary();
+  const figmaConfig = figmaIntegrationSummary();
+  const driveConfigured = Boolean(config.GOOGLE_CLIENT_ID && config.GOOGLE_CLIENT_SECRET);
+  const driveCallbackUrl = `${config.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/api/drive/callback`;
+  const driveClientTail = config.GOOGLE_CLIENT_ID ? config.GOOGLE_CLIENT_ID.slice(-12) : null;
+  const figmaLiveCheck = config.FIGMA_ACCESS_TOKEN
+    ? await verifyFigmaReadAccess().catch((error) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }))
+    : null;
+
   const [account, settings, users, drive] = await Promise.all([
     supabase.from("instagram_accounts").select("username,account_type,token_expires_at").eq("is_active", true).order("connected_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("app_settings").select("timezone,publish_weekday,publish_hour,generation_lead_hours,auto_publish").eq("id", true).single(),
@@ -60,6 +71,23 @@ export default async function SettingsPage({ searchParams }: { searchParams: Set
 
         <article className="card">
           <h2>Google Drive · biblioteca de mídia</h2>
+          {driveConnected ? <p className="feedback success">Google Drive conectado com sucesso.</p> : null}
+          {driveError ? <p className="feedback error"><strong>Falha ao conectar o Drive:</strong> {driveError}</p> : null}
+          <div className="list section">
+            <div className="list-row">
+              <div><h3>Cliente OAuth</h3><p>GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET precisam estar configurados no ambiente de produção.</p></div>
+              <span className={driveConfigured ? "badge success" : "badge failed"}>{driveConfigured ? "configurado" : "faltam credenciais"}</span>
+            </div>
+            <div className="list-row">
+              <div><h3>Callback registrado</h3><p>No Google Cloud → OAuth Client → Authorized redirect URIs, cadastre exatamente o endereço mostrado abaixo.</p></div>
+              <span className="badge">OAuth Web</span>
+            </div>
+          </div>
+          <div className="code-note">
+            Callback exato do Google Drive:<br />
+            <code>{driveCallbackUrl}</code>
+            {driveClientTail ? <><br />Client ID configurado termina em <code>{driveClientTail}</code>.</> : null}
+          </div>
           {drive.data?.is_active ? (
             <div className="list section">
               <div className="list-row">
@@ -73,26 +101,35 @@ export default async function SettingsPage({ searchParams }: { searchParams: Set
             </div>
           ) : (
             <div className="section">
-              <p>Conecte a conta Google que tem acesso à pasta de mídia da Inteli Academy. O Content Studio só usa arquivos escolhidos explicitamente em cada geração.</p>
+              <p>Conecte a conta Google que tem acesso à pasta de mídia da Inteli Academy. Se o Google bloquear antes de voltar para esta página, confira o callback acima e se sua conta está autorizada como test user no consent screen.</p>
               <a className="button" href="/api/drive/connect">Conectar Google Drive</a>
             </div>
           )}
-          <div className="code-note">Pasta configurada: {config.GOOGLE_DRIVE_ROOT_FOLDER_ID}. Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET na Vercel para habilitar o OAuth.</div>
+          <div className="code-note">Pasta configurada: {config.GOOGLE_DRIVE_ROOT_FOLDER_ID}. O escopo solicitado é somente leitura do Drive; nenhum arquivo é criado, alterado ou removido.</div>
         </article>
 
         <article className="card">
           <h2>Figma · revisão final</h2>
           <div className="list section">
             <div className="list-row">
-              <div><h3>ID Academy</h3><p>Arquivo {config.FIGMA_FILE_KEY}; outputs entram em “{config.FIGMA_OUTPUT_PAGE_NAME}”.</p></div>
-              <span className={config.FIGMA_ACCESS_TOKEN ? "badge success" : "badge failed"}>{config.FIGMA_ACCESS_TOKEN ? "leitura/export configurada" : "falta token"}</span>
+              <div><h3>ID Academy · leitura/exportação</h3><p>Arquivo {figmaConfig.fileKey}; outputs entram em “{figmaConfig.outputPageName}”.</p></div>
+              <span className={figmaConfig.readConfigured ? "badge success" : "badge failed"}>{figmaConfig.readConfigured ? "token configurado" : "falta FIGMA_ACCESS_TOKEN"}</span>
             </div>
             <div className="list-row">
-              <div><h3>Content Bridge</h3><p>O plugin interno importa apenas a versão escolhida como frames editáveis e devolve os node IDs para a plataforma.</p></div>
-              <span className={config.FIGMA_PLUGIN_SECRET ? "badge success" : "badge failed"}>{config.FIGMA_PLUGIN_SECRET ? "bridge configurado" : "falta segredo"}</span>
+              <div><h3>Teste ao vivo do token</h3><p>{figmaLiveCheck?.ok ? `${figmaLiveCheck.fileName} acessível pela API` : figmaLiveCheck && "error" in figmaLiveCheck ? figmaLiveCheck.error : "Adicione o token do Figma para executar o teste."}</p></div>
+              <span className={figmaLiveCheck?.ok ? "badge success" : "badge failed"}>{figmaLiveCheck?.ok ? "acesso confirmado" : "não confirmado"}</span>
+            </div>
+            <div className="list-row">
+              <div><h3>Content Bridge</h3><p>O plugin local cria os frames editáveis. Agora ele usa pareamento temporário; você não precisa conhecer nem copiar FIGMA_PLUGIN_SECRET.</p></div>
+              <span className="badge success">pareamento disponível</span>
             </div>
           </div>
-          <div className="code-note">Instale o plugin local a partir de figma-plugin/manifest.json e configure nele a URL desta aplicação + o mesmo FIGMA_PLUGIN_SECRET. O token FIGMA_ACCESS_TOKEN permanece somente no servidor.</div>
+          <div className="code-note">
+            URL para colocar no plugin:<br /><code>{figmaConfig.platformUrl}</code><br /><br />
+            Código de pareamento atual:<br /><code style={{ fontSize: "1.15em", fontWeight: 700 }}>{figmaConfig.pairingCode}</code><br />
+            Expira às {new Date(figmaConfig.pairingExpiresAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" })}. Recarregue esta página para gerar outro.
+          </div>
+          <div className="code-note">No Figma Desktop: Plugins → Development → Import plugin from manifest e selecione <code>figma-plugin/manifest.json</code>. Abra “Inteli Academy Content Bridge”, cole a URL e o código acima e clique em “Conectar e importar”. Se o Figma acusar ID inválido no manifest, crie um plugin local vazio uma vez para obter um ID de desenvolvimento numérico e substitua apenas o campo <code>id</code> do manifest local.</div>
         </article>
 
         <article className="card">
