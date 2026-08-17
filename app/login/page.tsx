@@ -15,9 +15,9 @@ export default async function LoginPage() {
       </section>
       <section className="login-panel">
         <div className="login-card">
-          <span className="eyebrow">Acesso restrito</span>
+          <span className="eyebrow">Acesso Inteli</span>
           <h2>Painel editorial</h2>
-          <p>Entre com uma conta convidada para administrar a aplicação.</p>
+          <p>Entre com sua conta existente ou libere seu primeiro acesso usando um e-mail institucional da Inteli.</p>
           <LoginForm />
         </div>
       </section>
