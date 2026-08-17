@@ -27,8 +27,9 @@ export function InviteUserForm() {
   return (
     <form className="inline-form" onSubmit={submit}>
       <div className="field">
-        <label htmlFor="invite-email">E-mail do novo administrador</label>
+        <label htmlFor="invite-email">Convite manual excepcional</label>
         <input id="invite-email" type="email" required value={email} onChange={(event: ChangeEvent<HTMLInputElement>) => setEmail(event.target.value)} placeholder="nome@exemplo.com" />
+        <p className="help">Usuários com e-mail institucional da Inteli não precisam de convite: eles liberam o próprio acesso na tela de login.</p>
       </div>
       <button className="button" type="submit" disabled={pending}>{pending ? "Enviando…" : "Convidar"}</button>
       {message ? <p className={message.includes("enviado") ? "feedback success" : "feedback error"}>{message}</p> : null}

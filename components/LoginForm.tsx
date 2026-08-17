@@ -10,6 +10,10 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
+  const [institutionalEmail, setInstitutionalEmail] = useState("");
+  const [accessMessage, setAccessMessage] = useState("");
+  const [accessError, setAccessError] = useState(false);
+  const [accessPending, setAccessPending] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -25,21 +29,67 @@ export function LoginForm() {
     router.refresh();
   }
 
+  async function requestInstitutionalAccess(event: FormEvent) {
+    event.preventDefault();
+    setAccessPending(true);
+    setAccessMessage("");
+    setAccessError(false);
+
+    const response = await fetch("/api/auth/inteli-access", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: institutionalEmail })
+    });
+    const payload = (await response.json()) as { message?: string; error?: string };
+
+    if (response.ok) {
+      setAccessMessage(payload.message ?? "Verifique seu e-mail para concluir o acesso.");
+      setInstitutionalEmail("");
+    } else {
+      setAccessError(true);
+      setAccessMessage(payload.error ?? "Não foi possível liberar o acesso.");
+    }
+    setAccessPending(false);
+  }
+
   return (
-    <form onSubmit={submit}>
-      <div className="field">
-        <label htmlFor="email">E-mail autorizado</label>
-        <input id="email" type="email" required value={email} onChange={(event: ChangeEvent<HTMLInputElement>) => setEmail(event.target.value)} />
+    <div>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label htmlFor="email">E-mail</label>
+          <input id="email" type="email" autoComplete="email" required value={email} onChange={(event: ChangeEvent<HTMLInputElement>) => setEmail(event.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="password">Senha</label>
+          <input id="password" type="password" autoComplete="current-password" required value={password} onChange={(event: ChangeEvent<HTMLInputElement>) => setPassword(event.target.value)} />
+        </div>
+        <button className="button full" disabled={pending} type="submit">
+          {pending ? "Entrando…" : "Entrar"}
+        </button>
+        {message ? <p className="feedback error">{message}</p> : null}
+      </form>
+
+      <div className="section">
+        <p className="help"><strong>Primeiro acesso com e-mail Inteli?</strong><br />Qualquer pessoa com e-mail institucional da Inteli pode liberar o próprio acesso, sem convite manual.</p>
+        <form onSubmit={requestInstitutionalAccess}>
+          <div className="field">
+            <label htmlFor="institutional-email">E-mail institucional</label>
+            <input
+              id="institutional-email"
+              type="email"
+              autoComplete="email"
+              required
+              value={institutionalEmail}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setInstitutionalEmail(event.target.value)}
+              placeholder="nome@sou.inteli.edu.br"
+            />
+          </div>
+          <button className="button full" disabled={accessPending} type="submit">
+            {accessPending ? "Liberando acesso…" : "Liberar meu acesso"}
+          </button>
+          {accessMessage ? <p className={`feedback ${accessError ? "error" : "success"}`}>{accessMessage}</p> : null}
+        </form>
       </div>
-      <div className="field">
-        <label htmlFor="password">Senha</label>
-        <input id="password" type="password" required value={password} onChange={(event: ChangeEvent<HTMLInputElement>) => setPassword(event.target.value)} />
-      </div>
-      <button className="button full" disabled={pending} type="submit">
-        {pending ? "Entrando…" : "Entrar"}
-      </button>
-      {message ? <p className="feedback error">{message}</p> : null}
-      <p className="help">Não há cadastro público. Um administrador existente precisa enviar um convite.</p>
-    </form>
+    </div>
   );
 }
