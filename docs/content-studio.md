@@ -53,11 +53,11 @@ O inventário também está codificado em `lib/figma-audit.ts`.
 - `single`: 1 frame 1080×1350; publicação de imagem única.
 - `carousel`: 2–10 frames 1080×1350; publicação em ordem.
 - `story`: 1 frame 1080×1920; o frame final do Figma é publicado.
-- `reel`: vídeo explicitamente escolhido no Drive. O frame 1080×1920 é criado/revisado no Figma como direção/capa visual, mas o endpoint de publicação envia o vídeo selecionado como mídia do Reel.
+- `reel`: vídeo explicitamente escolhido no Drive. O frame 1080×1920 é criado/revisado no Figma como direção/capa visual. O fluxo estruturado também oferece preview temporal e exports de edição; a publicação atual mantém o vídeo explicitamente selecionado como mídia do Reel até existir um artefato final de motion aprovado separadamente.
 
 ## Google Drive
 
-O Drive usa OAuth com escopo somente leitura. Configure um OAuth Web Client e registre:
+O Drive usa OAuth com escopo somente leitura. Configure um OAuth Web Client e registre exatamente o callback exibido em **Configurações → Google Drive**:
 
 `<NEXT_PUBLIC_APP_URL>/api/drive/callback`
 
@@ -82,21 +82,48 @@ Instalação local no Figma Desktop:
 1. Plugins → Development → Import plugin from manifest.
 2. Selecionar `figma-plugin/manifest.json`.
 3. Executar o plugin dentro do arquivo ID Academy.
-4. Informar a URL da aplicação e o mesmo valor configurado em `FIGMA_PLUGIN_SECRET`.
-5. Importar a próxima versão escolhida.
+4. Abrir **Configurações → Figma** no Content Studio.
+5. Copiar a URL da plataforma e o código de pareamento temporário exibidos ali.
+6. Colar ambos no `Inteli Academy Content Bridge` e clicar em **Conectar e importar**.
+7. Depois do primeiro pareamento, o token do bridge fica salvo no armazenamento local do plugin; um novo código só é necessário quando a credencial precisar ser renovada.
 
-O plugin nunca recebe `FIGMA_ACCESS_TOKEN`. Esse token é somente do servidor e serve para consultar/renderizar o estado final.
+O plugin nunca recebe `FIGMA_ACCESS_TOKEN`. Esse token é somente do servidor e serve para consultar/renderizar o estado final do arquivo Figma.
+
+O código de pareamento também não revela um segredo permanente. O backend valida o código temporário e emite uma credencial de bridge assinada. `FIGMA_PLUGIN_SECRET`, quando configurado, funciona como segredo dedicado de assinatura; quando omitido, o backend usa `CRON_SECRET` como fallback server-side.
 
 ## Variáveis de Figma
 
 - `FIGMA_ACCESS_TOKEN`
 - `FIGMA_FILE_KEY=xFV6r1G9gMjWvLf7gqyuYo`
 - `FIGMA_OUTPUT_PAGE_NAME=Academy • Gerações`
-- `FIGMA_PLUGIN_SECRET`
+- `FIGMA_PLUGIN_SECRET` — opcional; nunca deve ser compartilhado com o usuário do plugin
 
 ## Instagram
 
-A conta profissional continua conectada pela área Configurações. O Content Studio sincroniza os posts recentes para `instagram_reference_posts`. A análise visual é feita quando um post é escolhido como referência e fica em cache. Em uma geração com múltiplas referências, o modelo procura padrões comuns e combina apenas elementos compatíveis com a identidade da Academy; nenhum post é automaticamente tratado como principal.
+A conta profissional é conectada pela área **Configurações** usando Instagram API with Instagram Login / Business Login for Instagram.
+
+Configurações novas devem usar:
+
+- `INSTAGRAM_APP_ID`
+- `INSTAGRAM_APP_SECRET`
+- `META_GRAPH_VERSION`
+- `INSTAGRAM_BUSINESS_LOGIN_URL` apenas quando for necessário usar uma URL de Business Login fornecida explicitamente pela Meta.
+
+Scopes solicitados pelo backend:
+
+```text
+instagram_business_basic
+instagram_business_content_publish
+instagram_business_manage_insights
+```
+
+Callback OAuth:
+
+`<NEXT_PUBLIC_APP_URL>/api/instagram/callback`
+
+Cadastre na Meta exatamente o callback mostrado em **Configurações → Instagram**. Em apps ainda em desenvolvimento, a conta profissional usada no teste precisa ter o papel necessário no app — normalmente `Instagram Tester` — e o convite precisa ser aceito pela própria conta.
+
+O Content Studio sincroniza os posts recentes para `instagram_reference_posts`. A análise visual é feita quando um post é escolhido como referência e fica em cache. Em uma geração com múltiplas referências, o modelo procura padrões comuns e combina apenas elementos compatíveis com a identidade da Academy; nenhum post é automaticamente tratado como principal.
 
 Publicação manual do Content Studio sempre exige aprovação explícita no workbench. O pipeline semanal legado continua separado.
 
@@ -115,7 +142,7 @@ Publicação manual do Content Studio sempre exige aprovação explícita no wor
 - tokens OAuth são criptografados com `APP_ENCRYPTION_KEY`;
 - segredos permanecem server-side;
 - o proxy público de vídeo do Drive exige HMAC e confirma que o arquivo pertence ao projeto;
-- o bridge do Figma exige `FIGMA_PLUGIN_SECRET`;
+- o bridge do Figma usa credencial assinada obtida por pareamento temporário; o usuário não precisa conhecer o segredo interno do servidor;
 - todas as tabelas do Content Studio usam RLS;
 - sem artigos, `factualClaims` devem permanecer vazias e são validadas no backend;
 - com artigos, cada `factualClaim.sourceUrl` deve pertencer exatamente ao conjunto de artigos selecionados;
