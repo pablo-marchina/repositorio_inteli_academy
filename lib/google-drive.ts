@@ -25,7 +25,6 @@ type DriveFile = {
   modifiedTime?: string;
   size?: string;
   videoMediaMetadata?: { width?: number; height?: number; durationMillis?: string | number };
-  audioMediaMetadata?: { durationMillis?: string | number };
 };
 
 function googleConfig() {
@@ -114,13 +113,15 @@ function asAsset(file: DriveFile, path: string[]): DriveAsset {
     modifiedTime: file.modifiedTime ?? null,
     size: file.size ?? null,
     path,
-    durationMillis: numberOrNull(file.videoMediaMetadata?.durationMillis ?? file.audioMediaMetadata?.durationMillis),
+    durationMillis: numberOrNull(file.videoMediaMetadata?.durationMillis),
     width: numberOrNull(file.videoMediaMetadata?.width),
     height: numberOrNull(file.videoMediaMetadata?.height)
   };
 }
 
-const MEDIA_FIELDS = "id,name,mimeType,webViewLink,thumbnailLink,modifiedTime,size,videoMediaMetadata(width,height,durationMillis),audioMediaMetadata(durationMillis)";
+// Drive API v3 exposes videoMediaMetadata, but not audioMediaMetadata on File.
+// Audio duration remains null here and is resolved later from the audio analysis itself.
+const MEDIA_FIELDS = "id,name,mimeType,webViewLink,thumbnailLink,modifiedTime,size,videoMediaMetadata(width,height,durationMillis)";
 
 export async function listDriveMedia(): Promise<DriveAsset[]> {
   const connection = await activeConnection();
