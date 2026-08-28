@@ -34,7 +34,7 @@ export function StudioMotionControl({ projectId, versionId, versionNumber }: { p
     <section className={styles.card} style={{ marginBottom: 20 }}>
       <span className="eyebrow">Editor de vídeo por IA</span>
       <h3>Refinar a montagem da V{versionNumber}</h3>
-      <p>Dê instruções em linguagem natural para refinar o timing das camadas sem criar um editor manual na plataforma. A timeline estruturada continua sendo a fonte de verdade e segue exportável para DaVinci/OTIO.</p>
+      <p>Dê instruções em linguagem natural para refinar o timing das camadas sem criar um editor manual na plataforma. A timeline universal continua sendo a fonte de verdade e pode ser exportada para DaVinci Resolve, Premiere Pro, Final Cut Pro, Avid, After Effects e formatos de interchange.</p>
       <textarea className={styles.textarea} value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Ex.: faça o título entrar 0,5s depois e a música começar junto do primeiro corte." />
       <div className={styles.actions}><button className={styles.primary} type="button" onClick={apply} disabled={busy || !request.trim()}>{busy ? "Atualizando…" : "Aplicar ajuste com IA"}</button></div>
       {error ? <div className={styles.error}>{error}</div> : null}
