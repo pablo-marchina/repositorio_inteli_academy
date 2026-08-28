@@ -449,7 +449,7 @@ async function analyzeOneFootage(asset: DriveAsset): Promise<FootageAnalysis> {
     const { bytes } = await downloadDriveAsset(asset.id);
     if (bytes.byteLength > MAX_MEDIA_DOWNLOAD_BYTES) return fallbackSegments(asset);
 
-    let analysisBytes = bytes;
+    let analysisBytes: Uint8Array<ArrayBufferLike> = bytes;
     let analysisMimeType = asset.mimeType;
     if (!image) {
       const prepared = await prepareVideoForAnalysis(bytes, asset.mimeType, "academy-reel-footage-");
