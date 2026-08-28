@@ -86,7 +86,8 @@ export type ReelEditingShot = {
   sourceOutSeconds: number;
   durationSeconds: number;
   crop: { focalX: number; focalY: number; endFocalX: number; endFocalY: number; zoom: number };
-  transition: "cut" | "dissolve";
+  transition: "cut" | "dissolve" | "whip" | "zoom" | "blur" | "push";
+  transitionDurationSeconds?: number;
   semantic: SemanticShot & { motion: "low" | "medium" | "high"; energy: "low" | "medium" | "high" };
   referenceSemantic?: SemanticShot & { motion: "low" | "medium" | "high"; energy: "low" | "medium" | "high" };
   reason: string;
@@ -99,6 +100,8 @@ export type ReelEditingPlan = {
   shots: ReelEditingShot[];
   musicAssetId?: string;
   musicAnalysis: MusicBeatAnalysis | null;
+  musicSelectionReason?: string;
+  musicSelectionMode?: "user-selected" | "ai-selected" | "none";
   sourceAudio: boolean;
   beatSeconds: number[];
   beatSource: "music" | "reference" | "synthetic";
@@ -169,6 +172,36 @@ const musicSchema = z.object({
   beatSeconds: z.array(z.number().min(0).max(900)).min(3).max(1200)
 });
 
+const musicChoiceSchema = z.object({
+  assetId: z.string().min(1),
+  reason: z.string().min(1).max(220)
+});
+
+async function geminiTextJson<T>(prompt: string, schema: z.ZodType<T>): Promise<T | null> {
+  const config = env();
+  if (!config.GEMINI_API_KEY) return null;
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.GEMINI_POST_MODEL)}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": config.GEMINI_API_KEY, "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" }
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(12_000)
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    const raw = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
+    if (!raw) return null;
+    return schema.parse(JSON.parse(raw.replace(/^```json\s*|```$/g, "").trim()));
+  } catch (error) {
+    console.warn("[reel-analysis] automatic music selection failed; using deterministic fallback", { error: String(error) });
+    return null;
+  }
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -187,6 +220,10 @@ function isImageAsset(asset: DriveAsset) {
 
 function isVisualAsset(asset: DriveAsset) {
   return isVideoAsset(asset) || isImageAsset(asset);
+}
+
+function isReelReference(reference: InstagramReferencePost) {
+  return reference.mediaType === "VIDEO" || reference.mediaProductType === "REELS" || reference.mediaProductType === "REEL";
 }
 
 function ffmpegExecutable() {
@@ -273,7 +310,8 @@ async function geminiMediaJson<T>(bytes: Uint8Array, mimeType: string, prompt: s
         contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType, data: Buffer.from(bytes).toString("base64") } }] }],
         generationConfig: { responseMimeType: "application/json" }
       }),
-      cache: "no-store"
+      cache: "no-store",
+      signal: AbortSignal.timeout(22_000)
     });
     if (!response.ok) {
       const body = (await response.text()).slice(0, 800);
@@ -626,14 +664,35 @@ export async function analyzeDriveFootage(assets: DriveAsset[]) {
   return results;
 }
 
+async function prepareAudioForAnalysis(bytes: Uint8Array, mimeType: string, prefix: string) {
+  if (bytes.byteLength > MAX_MEDIA_DOWNLOAD_BYTES) return null;
+  if (bytes.byteLength <= MAX_INLINE_MEDIA_BYTES) return { bytes, mimeType };
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  const input = join(dir, "input-audio");
+  const output = join(dir, "analysis.m4a");
+  try {
+    await writeFile(input, bytes);
+    await runFfmpeg([
+      "-y", "-i", input, "-vn", "-c:a", "aac", "-b:a", "64k", "-ac", "1",
+      "-movflags", "+faststart", output
+    ]);
+    const compact = new Uint8Array(await readFile(output));
+    return compact.byteLength <= MAX_INLINE_MEDIA_BYTES ? { bytes: compact, mimeType: "audio/mp4" } : null;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function analyzeMusicAsset(asset: DriveAsset): Promise<MusicBeatAnalysis | null> {
   const durationFromDrive = mediaDuration(asset);
-  if (!asset.mimeType.startsWith("audio/") || Number(asset.size ?? 0) > MAX_INLINE_MEDIA_BYTES) return null;
+  if (!asset.mimeType.startsWith("audio/") || Number(asset.size ?? 0) > MAX_MEDIA_DOWNLOAD_BYTES) return null;
   try {
     const { bytes } = await downloadDriveAsset(asset.id);
+    const prepared = await prepareAudioForAnalysis(bytes, asset.mimeType, `academy-music-${asset.id.slice(0, 8)}-`);
+    if (!prepared) return null;
     const analysis = await geminiMediaJson(
-      bytes,
-      asset.mimeType,
+      prepared.bytes,
+      prepared.mimeType,
       `Analise esta faixa de áudio apenas para edição temporal. A duração informada pelo Drive é ${durationFromDrive ? `${durationFromDrive.toFixed(3)}s` : "desconhecida"}. Retorne duração, BPM aproximado e timestamps em segundos dos beats/acentos fortes úteis para cortes. Não transcreva letra nem fala.`,
       musicSchema
     );
@@ -647,6 +706,34 @@ async function analyzeMusicAsset(asset: DriveAsset): Promise<MusicBeatAnalysis |
   }
 }
 
+
+async function chooseAutomaticMusic(input: {
+  candidates: DriveAsset[];
+  context?: string;
+  reference: ReelReferenceTemporalAnalysis | null;
+}) {
+  const candidates = input.candidates
+    .filter((asset) => asset.mimeType.startsWith("audio/") && Number(asset.size ?? 0) <= MAX_MEDIA_DOWNLOAD_BYTES)
+    .slice(0, 12);
+  if (!candidates.length) return null;
+  const referenceSummary = input.reference
+    ? `ritmo=${input.reference.rhythm}; duração=${input.reference.durationSeconds.toFixed(1)}s; média por shot=${input.reference.averageShotSeconds.toFixed(2)}s`
+    : "sem Reel específico; prefira uma faixa moderna, energética e adequada a conteúdo institucional/social";
+  const candidateSummary = candidates.map((asset) => ({
+    id: asset.id,
+    name: asset.name,
+    path: asset.path?.join("/") ?? "",
+    modifiedTime: asset.modifiedTime ?? null
+  }));
+  const choice = await geminiTextJson(
+    `Você é o music director de um editor de Reel. Escolha UMA faixa autorizada do catálogo do Google Drive para servir como trilha. Não invente IDs. Não cite letras. Contexto editorial: ${(input.context ?? "").slice(0, 1800) || "não informado"}. Referência: ${referenceSummary}. Dê preferência a nomes/metadados que indiquem energia, ritmo e uso compatível com social video; evite arquivos que pareçam voz, entrevista, podcast ou gravação bruta. Candidatas: ${JSON.stringify(candidateSummary)}. Retorne assetId e reason curto em português.`,
+    musicChoiceSchema
+  );
+  const selected = choice ? candidates.find((asset) => asset.id === choice.assetId) : null;
+  if (selected) return { asset: selected, reason: choice!.reason, mode: "ai-selected" as const };
+  const fallback = candidates.find((asset) => !/(voice|voz|speech|fala|interview|entrevista|podcast|meeting|reuniao)/i.test(`${asset.name} ${asset.path?.join("/") ?? ""}`)) ?? candidates[0];
+  return { asset: fallback, reason: "Seleção automática por catálogo autorizado; metadados insuficientes para a escolha semântica completa.", mode: "ai-selected" as const };
+}
 function referenceDurationPattern(reference: ReelReferenceTemporalAnalysis | null) {
   if (!reference?.shots.length) return [];
   return reference.shots.map((shot) => clamp(shot.endSeconds - shot.startSeconds, .15, 30));
@@ -701,9 +788,30 @@ function fallbackShotCount(target: number, visualCount: number) {
   return clamp(Math.round(target / average), 1, MAX_REFERENCE_SHOTS);
 }
 
-function transitionForReference(reference: ReelReferenceTemporalAnalysis | null, index: number): "cut" | "dissolve" {
-  const value = reference?.shots[index]?.transition?.toLowerCase() ?? "";
-  return /dissolve|fade|cross/.test(value) ? "dissolve" : "cut";
+function transitionForBoundary(
+  reference: ReelReferenceTemporalAnalysis | null,
+  index: number,
+  previous: ReelEditingShot["semantic"] | undefined,
+  current: FootageAnalysis["bestSegments"][number]
+): { type: ReelEditingShot["transition"]; duration: number } {
+  if (index === 0) return { type: "cut", duration: 0 };
+  const value = reference?.shots[Math.max(0, index - 1)]?.transition?.toLowerCase() ?? "";
+  if (/whip|swish|slide/.test(value)) return { type: "whip", duration: .16 };
+  if (/zoom/.test(value)) return { type: "zoom", duration: .2 };
+  if (/blur/.test(value)) return { type: "blur", duration: .18 };
+  if (/push|wipe/.test(value)) return { type: "push", duration: .2 };
+  if (/dissolve|fade|cross/.test(value)) return { type: "dissolve", duration: .24 };
+  if (reference) return { type: "cut", duration: 0 };
+
+  const motionJump = previous?.motion === "high" || current.motion === "high";
+  const scaleJump = previous && previous.framing !== current.framing && [previous.framing, current.framing].some((framing) => framing === "close" || framing === "detail");
+  const energyJump = previous && previous.energy !== current.energy;
+  if (motionJump && index % 3 === 1) return { type: "whip", duration: .14 };
+  if (scaleJump && index % 3 === 2) return { type: "zoom", duration: .18 };
+  if (energyJump && index % 4 === 0) return { type: "push", duration: .18 };
+  if (index % 7 === 0) return { type: "blur", duration: .16 };
+  if (index % 5 === 0) return { type: "dissolve", duration: .2 };
+  return { type: "cut", duration: 0 };
 }
 
 function semanticKey(value: SemanticShot) {
@@ -745,6 +853,8 @@ export function buildReelEditingPlan(input: {
   footage: FootageAnalysis[];
   reference: ReelReferenceTemporalAnalysis | null;
   music?: MusicBeatAnalysis | null;
+  musicSelectionReason?: string;
+  musicSelectionMode?: "user-selected" | "ai-selected" | "none";
 }): ReelEditingPlan {
   const visuals = input.assets.filter(isVisualAsset);
   const videos = visuals.filter(isVideoAsset);
@@ -797,10 +907,13 @@ export function buildReelEditingPlan(input: {
     if (actualDuration <= .05) continue;
 
     const stillPan = image && Math.abs(segment.endFocalX - segment.focalX) < .01 && Math.abs(segment.endFocalY - segment.focalY) < .01;
+    const transition = transitionForBoundary(input.reference, index, shots.at(-1)?.semantic, segment);
+    const transitionDuration = Math.min(transition.duration, Math.max(0, actualDuration * .22), Math.max(0, (shots.at(-1)?.durationSeconds ?? actualDuration) * .22));
+    const shotTimelineStart = Math.max(0, timelineStart - transitionDuration);
     shots.push({
       id: `shot-${shots.length + 1}`,
       assetId: analysis.assetId,
-      timelineStartSeconds: timelineStart,
+      timelineStartSeconds: shotTimelineStart,
       sourceInSeconds: sourceIn,
       sourceOutSeconds: sourceOut,
       durationSeconds: actualDuration,
@@ -811,12 +924,13 @@ export function buildReelEditingPlan(input: {
         endFocalY: clamp(stillPan ? segment.focalY - .01 : segment.endFocalY, .05, .95),
         zoom: image ? 1.04 : analysis.width && analysis.height && analysis.width > analysis.height ? 1.08 : 1
       },
-      transition: transitionForReference(input.reference, index),
+      transition: transition.type,
+      transitionDurationSeconds: transitionDuration,
       semantic: { shotType: segment.shotType, framing: segment.framing, sceneType: segment.sceneType, subject: segment.subject, motion: segment.motion, energy: segment.energy },
       ...(referenceShot ? { referenceSemantic: { shotType: referenceShot.shotType, framing: referenceShot.framing, sceneType: referenceShot.sceneType, subject: referenceShot.subject, motion: referenceShot.motion, energy: referenceShot.energy } } : {}),
       reason: `${segment.reason} · visual=${analysis.analysisMode} · função=${segment.shotType}/${segment.framing}/${segment.sceneType} · score ${segment.score.toFixed(0)}/100 · shot ${index + 1}/${desiredCount}${referenceShot ? ` alinhado a ${referenceShot.shotType}/${referenceShot.framing}` : input.reference ? " seguindo a cadência temporal da referência" : " com diversidade visual"}`
     });
-    timelineStart += actualDuration;
+    timelineStart = shotTimelineStart + actualDuration;
     usedAssets.set(analysis.assetId, (usedAssets.get(analysis.assetId) ?? 0) + 1);
     usedSemantic.set(semanticKey(segment), (usedSemantic.get(semanticKey(segment)) ?? 0) + 1);
     usedScenes.set(segment.sceneType, (usedScenes.get(segment.sceneType) ?? 0) + 1);
@@ -832,6 +946,8 @@ export function buildReelEditingPlan(input: {
     shots,
     musicAssetId: audio?.id,
     musicAnalysis: input.music ?? null,
+    musicSelectionReason: input.musicSelectionReason,
+    musicSelectionMode: input.musicSelectionMode ?? (audio ? "user-selected" : "none"),
     sourceAudio: !audio && videos.length > 0,
     beatSeconds: grid.beats.filter((beat) => beat <= timelineStart + .05),
     beatSource: grid.source,
@@ -845,21 +961,42 @@ export function buildReelEditingPlan(input: {
   };
 }
 
-export async function analyzeAndPlanReel(assets: DriveAsset[], references: InstagramReferencePost[]) {
-  const selectedReel = references.find((reference) => reference.mediaType === "VIDEO" || reference.mediaProductType === "REELS" || reference.mediaProductType === "REEL");
-  const musicAsset = assets.find((asset) => asset.mimeType.startsWith("audio/"));
-  const [reference, footage, music] = await Promise.all([
+export async function analyzeAndPlanReel(
+  assets: DriveAsset[],
+  references: InstagramReferencePost[],
+  options: { musicCandidates?: DriveAsset[]; context?: string } = {}
+) {
+  const selectedReel = references.find((reference) => isReelReference(reference));
+  const explicitMusic = assets.find((asset) => asset.mimeType.startsWith("audio/"));
+  const [reference, footage] = await Promise.all([
     selectedReel ? analyzeInstagramReelReference(selectedReel) : Promise.resolve(null),
-    analyzeDriveFootage(assets),
-    musicAsset ? analyzeMusicAsset(musicAsset) : Promise.resolve(null)
+    analyzeDriveFootage(assets)
   ]);
   if (selectedReel && !reference) {
     throw new Error("A referência de Reel não pôde ser analisada nem semanticamente pelo Gemini nem temporalmente pelo FFmpeg local. Verifique se a mídia do Instagram ainda está acessível.");
   }
-  if (musicAsset && !music) {
-    throw new Error("A faixa de áudio selecionada não pôde ser analisada para detectar beats. Escolha outra faixa ou gere sem música dedicada; o sistema não vai fingir edição no beat.");
+
+  let musicAsset = explicitMusic ?? null;
+  let musicSelectionReason = explicitMusic ? "Faixa fornecida explicitamente junto das mídias do projeto." : undefined;
+  let musicSelectionMode: ReelEditingPlan["musicSelectionMode"] = explicitMusic ? "user-selected" : "none";
+  if (!musicAsset && options.musicCandidates?.length) {
+    const selected = await chooseAutomaticMusic({ candidates: options.musicCandidates, context: options.context, reference });
+    if (selected) {
+      musicAsset = selected.asset;
+      musicSelectionReason = selected.reason;
+      musicSelectionMode = selected.mode;
+    }
   }
 
+  const music = musicAsset ? await analyzeMusicAsset(musicAsset) : null;
+  if (musicAsset && !music) {
+    console.warn("[reel-analysis] selected music could not be beat-analyzed; falling back to source audio", { assetId: musicAsset.id });
+    musicAsset = null;
+    musicSelectionReason = "A faixa escolhida não passou pela análise temporal; o Reel preserva o áudio natural em vez de fingir sincronização musical.";
+    musicSelectionMode = "none";
+  }
+
+  const effectiveAssets = musicAsset && !assets.some((asset) => asset.id === musicAsset!.id) ? [...assets, musicAsset] : assets;
   const visuals = assets.filter(isVisualAsset);
   const visuallyAnalyzed = footage.filter((analysis) => analysis.analysisMode !== "metadata-fallback").length;
   const minimumCoverage = visuals.length <= 4 ? 1 : visuals.length <= 8 ? .75 : .67;
@@ -867,5 +1004,12 @@ export async function analyzeAndPlanReel(assets: DriveAsset[], references: Insta
     throw new Error(`Só ${visuallyAnalyzed}/${visuals.length} mídias tiveram análise visual real/local. O mínimo seguro para esta geração é ${Math.ceil(visuals.length * minimumCoverage)}. O Reel não será montado usando apenas metadados genéricos.`);
   }
 
-  return buildReelEditingPlan({ assets, footage, reference, music });
+  return buildReelEditingPlan({
+    assets: effectiveAssets,
+    footage,
+    reference,
+    music,
+    musicSelectionReason,
+    musicSelectionMode
+  });
 }

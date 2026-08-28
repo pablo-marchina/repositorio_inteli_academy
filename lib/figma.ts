@@ -189,6 +189,12 @@ function primaryBrandCandidate(node: FigmaRestNode) {
   return /(?:^|\s)(inteli academy|academy|ia)(?:\s|$)/.test(value) && !/parceir|partner|cliente|empresa/.test(value);
 }
 
+function mascotCandidate(node: FigmaRestNode) {
+  const value = `${normalized(node.name)} ${normalized(node.characters)}`;
+  return /(?:mascot|mascote|robot|robo|bot)(?:\s|$|[-_])/i.test(value)
+    && ["VECTOR", "RECTANGLE", "INSTANCE", "COMPONENT", "GROUP", "FRAME", "BOOLEAN_OPERATION"].includes(node.type ?? "");
+}
+
 function inferBrandRoles(root: FigmaRestNode | undefined, frameBox: FigmaRestNode["absoluteBoundingBox"], roles: Record<string, SemanticItem[]>) {
   if (!root || !frameBox?.width || !frameBox.height) return;
   const frameArea = frameBox.width * frameBox.height;
@@ -218,14 +224,22 @@ function inferBrandRoles(root: FigmaRestNode | undefined, frameBox: FigmaRestNod
     pushRole(roles, "primaryLogo", roles.logo[0]);
   }
 
+  // The Academy mascot/robot is a real brand asset, not merely visual inspiration.
+  // Explicit AI::mascot tags win; legacy Figma files are discovered semantically by name.
+  if (!roles.mascot?.length) {
+    const mascot = visible.find(mascotCandidate);
+    pushRole(roles, "mascot", mascot ? relativeItem(mascot, frameBox) : null);
+  }
+
   // Keep `logo` as a backwards-compatible render alias containing both owned
   // and partner marks. The semantic QA still sees the two roles separately.
   for (const item of roles.primaryLogo ?? []) pushRole(roles, "logo", item);
   for (const item of roles.partnerLogo ?? []) pushRole(roles, "logo", item);
 
   const backgroundIds = new Set((roles.background ?? []).map((item) => item.id));
+  const semanticBrandIds = new Set(["primaryLogo", "partnerLogo", "mascot", "brandElement"].flatMap((role) => (roles[role] ?? []).map((item) => item.id)));
   const decorationCandidates = direct
-    .filter((node) => !tagged.has(node.id!) && !backgroundIds.has(node.id!) && !containsEditorialContent(node) && ["VECTOR", "ELLIPSE", "RECTANGLE", "LINE", "POLYGON", "STAR", "INSTANCE", "COMPONENT", "GROUP"].includes(node.type ?? ""))
+    .filter((node) => !tagged.has(node.id!) && !semanticBrandIds.has(node.id!) && !backgroundIds.has(node.id!) && !containsEditorialContent(node) && ["VECTOR", "ELLIPSE", "RECTANGLE", "LINE", "POLYGON", "STAR", "INSTANCE", "COMPONENT", "GROUP"].includes(node.type ?? ""))
     .map((node) => ({ node, area: (node.absoluteBoundingBox?.width ?? 0) * (node.absoluteBoundingBox?.height ?? 0) }))
     .filter((candidate) => candidate.area >= frameArea * .0005 && candidate.area <= frameArea * .42)
     .sort((a, b) => b.area - a.area)
