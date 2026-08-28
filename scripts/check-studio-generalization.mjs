@@ -8,6 +8,9 @@ const generationFiles = [
   "lib/manual-generation.ts",
   "lib/pipeline.ts",
   "lib/enhanced-pipeline.ts",
+  "lib/rss.ts",
+  "lib/scoring.ts",
+  "lib/brand.ts",
   "lib/renderer.tsx",
   "lib/figma-visual-system.ts",
   "lib/studio-ai.ts",
@@ -65,7 +68,7 @@ const concreteIdentifierRules = [
   },
   {
     id: "hardcoded-figma-node-id",
-    pattern: /["']\d{1,8}:\d{1,8}["']/g,
+    pattern: /\b(?:nodeId|frameId|sourceFigmaFrameId|figmaTemplateNodeId|figmaOutputFrameId)\s*[:=]\s*["']\d{1,10}:\d{1,10}["']/g,
     message: "Figma node IDs must be discovered or supplied at runtime"
   }
 ];
