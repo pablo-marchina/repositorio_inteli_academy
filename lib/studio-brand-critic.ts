@@ -14,7 +14,7 @@ const criticSchema = z.object({
     passed: z.boolean(),
     severity: z.enum(["error", "warning", "info"]),
     detail: z.string().max(400)
-  })).max(16)
+  })).max(20)
 });
 
 async function asInlineImage(url: string) {
@@ -57,26 +57,34 @@ async function runCritic(parts: Array<{ text?: string; inlineData?: { mimeType: 
   }
 }
 
+function brandInstruction(payload: StudioPayload) {
+  const partnerRequired = payload.postArchetype === "partnership" || Boolean(payload.brandContext?.partnerName);
+  return `Arquétipo editorial: ${payload.postArchetype ?? "general"}. Marca principal: ${payload.brandContext?.primaryBrandName ?? "Inteli Academy"}. ${partnerRequired
+    ? `Há parceiro${payload.brandContext?.partnerName ? ` (${payload.brandContext.partnerName})` : ""}: exija uma partnerLogo real e separada da primaryLogo. Não aceite texto improvisado, recorte incidental de foto/vídeo ou símbolo redesenhado como logo.`
+    : "Não há exigência de logo de parceiro."}`;
+}
+
 export async function reviewFigmaBrandFidelity(input: { payload: StudioPayload; outputRenderUrls: string[]; sourceRenderUrls: string[] }): Promise<StudioBrandReport | null> {
   const pairs = Math.min(input.outputRenderUrls.length, input.sourceRenderUrls.length, 4);
   if (!pairs) return null;
   const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [{
-    text: `Você é um diretor de arte revisando fidelidade de marca da Inteli Academy. Para cada par, a primeira imagem é o TEMPLATE/BASE real do Figma e a segunda é o OUTPUT gerado a partir dele. Avalie identidade, hierarquia, composição, proporções, tipografia percebida, grafismos, logo, respiro e qualidade visual. Mudanças de texto e mídia são esperadas; descaracterização não é. Penalize desalinhamento, excesso de texto, contraste ruim e perda do padrão do template. Conteúdo esperado: ${JSON.stringify({ contentType: input.payload.contentType, title: input.payload.title, frames: input.payload.frames, styleSummary: input.payload.styleSummary })}. Retorne apenas JSON com score 0-100, passed, issues, corrections e checks.`
+    text: `Você é um diretor de arte revisando fidelidade de marca da Inteli Academy. Para cada par, a primeira imagem é o TEMPLATE/BASE real descoberto no Figma e a segunda é o OUTPUT gerado a partir dele. Avalie identidade, hierarquia, composição, proporções, tipografia percebida, grafismos, primaryLogo, partnerLogo quando exigida, respiro e qualidade visual. Mudanças de texto e mídia são esperadas; descaracterização não é. Penalize desalinhamento, excesso de texto, contraste ruim, substituição ou invenção de logos e perda do padrão do template. ${brandInstruction(input.payload)} Conteúdo esperado: ${JSON.stringify({ contentType: input.payload.contentType, title: input.payload.title, frames: input.payload.frames, styleSummary: input.payload.styleSummary })}. Retorne apenas JSON com score 0-100, passed, issues, corrections e checks.`
   }];
   for (let index = 0; index < pairs; index += 1) {
     parts.push({ text: `PAR ${index + 1} — template/base real` }, await asInlineImage(input.sourceRenderUrls[index]), { text: `PAR ${index + 1} — output gerado` }, await asInlineImage(input.outputRenderUrls[index]));
   }
-  return runCritic(parts, "visual-critic", 80);
+  return runCritic(parts, "visual-critic", 82);
 }
 
 export async function reviewRenderedReelFrames(input: { payload: StructuredStudioPayload; renderedFrames: string[]; figmaReferenceUrl?: string | null }): Promise<StudioBrandReport | null> {
   if (!input.renderedFrames.length) return null;
   const timeline = input.payload.artifact?.videoTimeline;
   const plan = input.payload.artifact?.reelPlan;
+  const styleMatch = plan && (plan as typeof plan & { styleMatch?: Record<string, unknown> }).styleMatch;
   const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [{
-    text: `Você está fazendo QA VISUAL do render real de um Reel da Inteli Academy. As imagens seguintes são frames capturados do vídeo executável; não são mockups. Compare o resultado com a referência registrada no plano na medida em que essa informação realmente estiver disponível. Avalie: (1) variedade real de enquadramentos e cenas, (2) se os frames repetem a mesma sala/mesmo plano sem motivo, (3) correspondência entre função dos shots gerados e shotType/framing/motion/energy da referência SOMENTE quando reference.semanticAvailable não for false e a mídia não estiver em analysisMode=local-video, (4) crop 9:16 e acompanhamento do assunto, (5) legibilidade e presença de texto somente nas janelas textCues efetivamente detectadas, (6) consistência de marca, hierarquia, contraste e sensação de edição profissional. Penalize severamente metadata-fallback, frames duplicados, redundância visual, sujeitos importantes cortados e texto inventado. NÃO trate analysisMode=local-video ou reference.analysisMode=temporal-fallback como equivalentes a metadata-fallback: nesses modos os pixels e cortes foram analisados por FFmpeg, portanto avalie a qualidade visual observável normalmente, mas reduza a confiança e não conceda crédito por semântica/tracking que o plano declara indisponíveis. O áudio natural dos takes NÃO deve ser considerado beat-matched com a referência; somente música dedicada com beatSource=music pode receber crédito por sincronização musical. Plano executado: ${JSON.stringify({ executionSummary: timeline?.executionSummary, tracks: timeline?.tracks, reelQuality: input.payload.artifact?.reelQuality, analysisSummary: plan?.analysisSummary, shots: plan?.shots, reference: plan?.reference, styleSummary: input.payload.styleSummary })}. Um score >= 82 é necessário para passed. Retorne somente JSON.`
+    text: `Você está fazendo QA VISUAL do render real de um Reel da Inteli Academy. As imagens seguintes são frames capturados do vídeo executável; não são mockups. Compare o resultado com a referência registrada no plano na medida em que essa informação realmente estiver disponível. Avalie separadamente: (1) timing/cadência, (2) função narrativa de cada shot, (3) escala/enquadramento do sujeito, (4) mudança visual entre cortes consecutivos, (5) variedade real de cenas sem repetição da mesma sala/plano, (6) crop 9:16 e acompanhamento do assunto, (7) overlays/textos apenas nas janelas detectadas, (8) estrutura de marca do Figma e (9) primaryLogo/partnerLogo. ${brandInstruction(input.payload)} Penalize severamente metadata-fallback, frames duplicados, redundância visual, sujeitos importantes cortados, texto inventado, logo inventada e uma sequência que acerta apenas os timestamps mas não reproduz a progressão visual da referência. NÃO trate analysisMode=local-video ou reference.analysisMode=temporal-fallback como equivalentes a metadata-fallback: nesses modos os pixels/cortes foram analisados por FFmpeg, mas não conceda crédito por semântica indisponível. O áudio natural dos takes NÃO deve ser considerado beat-matched com a referência; somente música dedicada com beatSource=music pode receber crédito por sincronização musical. Se reference.semanticAvailable=false, não marque equivalência narrativa/semântica como aprovada. Plano executado: ${JSON.stringify({ executionSummary: timeline?.executionSummary, tracks: timeline?.tracks, reelQuality: input.payload.artifact?.reelQuality, analysisSummary: plan?.analysisSummary, styleMatch, shots: plan?.shots, reference: plan?.reference, styleSummary: input.payload.styleSummary })}. Um score >= 84 é necessário para passed, sem nenhum check de erro falhando. Retorne somente JSON.`
   }];
   if (input.figmaReferenceUrl) parts.push({ text: "FRAME DO FIGMA aprovado como referência de layout/brand" }, await asInlineImage(input.figmaReferenceUrl));
-  input.renderedFrames.slice(0, 5).forEach((frame, index) => parts.push({ text: `RENDER REAL — amostra ${index + 1}` }, dataUrlPart(frame)));
-  return runCritic(parts, "render-critic", 82);
+  input.renderedFrames.slice(0, 6).forEach((frame, index) => parts.push({ text: `RENDER REAL — amostra ${index + 1}` }, dataUrlPart(frame)));
+  return runCritic(parts, "render-critic", 84);
 }
