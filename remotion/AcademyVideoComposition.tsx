@@ -11,17 +11,31 @@ export type AcademyVideoCompositionProps = {
   brandLayerUrls?: Record<string, string[]>;
 };
 
-function clamp(value: number, min: number, max: number) { return Math.min(max, Math.max(min, value)); }
-function layoutItems(layout: StudioFigmaVideoLayout | undefined, role: string) { return layout?.roles?.[role] ?? []; }
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function layoutItems(layout: StudioFigmaVideoLayout | undefined, role: string) {
+  return layout?.roles?.[role] ?? [];
+}
 
 function entrance(frame: number, fps: number, duration: number) {
   const enter = spring({ frame: Math.max(0, frame), fps, config: { damping: 18, stiffness: 160 } });
   const exitStart = Math.max(0, duration - Math.round(.18 * fps));
   const exit = interpolate(frame, [exitStart, duration], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  return { opacity: interpolate(enter, [0, 1], [0, 1]) * exit, transform: `translateY(${interpolate(enter, [0, 1], [24, 0])}px)` };
+  return {
+    opacity: interpolate(enter, [0, 1], [0, 1]) * exit,
+    transform: `translateY(${interpolate(enter, [0, 1], [24, 0])}px)`
+  };
 }
 
-function FigmaRole({ role, urls, layout, animate = false, duration = 1 }: { role: string; urls: string[]; layout?: StudioFigmaVideoLayout; animate?: boolean; duration?: number }) {
+function FigmaRole({ role, urls, layout, animate = false, duration = 1 }: {
+  role: string;
+  urls: string[];
+  layout?: StudioFigmaVideoLayout;
+  animate?: boolean;
+  duration?: number;
+}) {
   const { width, height, fps } = useVideoConfig();
   const frame = useCurrentFrame();
   const items = layoutItems(layout, role);
@@ -30,12 +44,24 @@ function FigmaRole({ role, urls, layout, animate = false, duration = 1 }: { role
     {urls.map((url, index) => {
       const item = items[index];
       if (!item?.box || !layout?.frameBox?.width || !layout.frameBox.height) return null;
-      return <Img key={`${role}-${index}`} src={url} style={{ position: "absolute", left: item.box.x / layout.frameBox.width * width, top: item.box.y / layout.frameBox.height * height, width: item.box.width / layout.frameBox.width * width, height: item.box.height / layout.frameBox.height * height, objectFit: "contain" }} />;
+      return <Img key={`${role}-${index}`} src={url} style={{
+        position: "absolute",
+        left: item.box.x / layout.frameBox.width * width,
+        top: item.box.y / layout.frameBox.height * height,
+        width: item.box.width / layout.frameBox.width * width,
+        height: item.box.height / layout.frameBox.height * height,
+        objectFit: "contain"
+      }} />;
     })}
   </div>;
 }
 
-function FallbackText({ track, text, layout, role }: { track: StudioVideoTrack; text: string; layout?: StudioFigmaVideoLayout; role: string }) {
+function FallbackText({ track, text, layout, role }: {
+  track: StudioVideoTrack;
+  text: string;
+  layout?: StudioFigmaVideoLayout;
+  role: string;
+}) {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const item = layoutItems(layout, role)[0];
@@ -48,7 +74,18 @@ function FallbackText({ track, text, layout, role }: { track: StudioVideoTrack; 
         : { left: width * .08, top: height * .72, width: width * .84, height: height * .14 };
   const style = item?.style;
   const fontSize = style?.fontSize ? style.fontSize / (layout?.frameBox?.width || width) * width : role === "headline" ? 82 : role === "eyebrow" ? 28 : 34;
-  return <div style={{ position: "absolute", ...box, color: "white", fontFamily: style?.fontFamily ? `${style.fontFamily}, sans-serif` : "Figtree, Inter, sans-serif", fontSize, fontWeight: style?.fontWeight ?? (role === "headline" ? 800 : 600), lineHeight: style?.lineHeightPx && style.fontSize ? style.lineHeightPx / style.fontSize : 1.08, textAlign: style?.textAlignHorizontal === "CENTER" ? "center" : style?.textAlignHorizontal === "RIGHT" ? "right" : "left", overflow: "hidden", ...entrance(frame, fps, track.durationInFrames) }}>{text}</div>;
+  return <div style={{
+    position: "absolute",
+    ...box,
+    color: "white",
+    fontFamily: style?.fontFamily ? `${style.fontFamily}, sans-serif` : "Figtree, Inter, sans-serif",
+    fontSize,
+    fontWeight: style?.fontWeight ?? (role === "headline" ? 800 : 600),
+    lineHeight: style?.lineHeightPx && style.fontSize ? style.lineHeightPx / style.fontSize : 1.08,
+    textAlign: style?.textAlignHorizontal === "CENTER" ? "center" : style?.textAlignHorizontal === "RIGHT" ? "right" : "left",
+    overflow: "hidden",
+    ...entrance(frame, fps, track.durationInFrames)
+  }}>{text}</div>;
 }
 
 export function AcademyVideoComposition({ payload, timeline, assetUrls, figmaLayout, brandLayerUrls = {} }: AcademyVideoCompositionProps) {
@@ -74,8 +111,19 @@ export function AcademyVideoComposition({ payload, timeline, assetUrls, figmaLay
       const opacity = track.transition === "dissolve"
         ? interpolate(local, [0, fadeFrames, Math.max(fadeFrames, track.durationInFrames - fadeFrames), track.durationInFrames], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
         : 1;
+      const stillMotion = track.kind === "image" ? interpolate(local, [0, lastLocalFrame], [1, 1.035], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1;
+      const mediaStyle = {
+        width: "100%",
+        height: "100%",
+        objectFit: "cover" as const,
+        objectPosition: `${clamp(focalX, 0, 1) * 100}% ${clamp(focalY, 0, 1) * 100}%`,
+        transform: `scale(${(crop.zoom || 1) * stillMotion})`,
+        opacity
+      };
       return <Sequence key={track.id} from={track.startFrame} durationInFrames={track.durationInFrames}>
-        <Video src={src} startFrom={track.sourceStartFrame ?? 0} muted={music ? true : Boolean(track.muted)} volume={music ? 0 : track.volume ?? .72} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: `${clamp(focalX, 0, 1) * 100}% ${clamp(focalY, 0, 1) * 100}%`, transform: `scale(${crop.zoom || 1})`, opacity }} />
+        {track.kind === "image"
+          ? <Img src={src} style={mediaStyle} />
+          : <Video src={src} startFrom={track.sourceStartFrame ?? 0} muted={music ? true : Boolean(track.muted)} volume={music ? 0 : track.volume ?? .72} style={mediaStyle} />}
       </Sequence>;
     })}
 
