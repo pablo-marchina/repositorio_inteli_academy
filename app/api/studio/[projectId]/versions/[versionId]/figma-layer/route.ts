@@ -2,7 +2,7 @@ import { apiAdmin } from "@/lib/api-auth";
 import { getCurrentFigmaRenderUrls, getCurrentFigmaSemanticState } from "@/lib/figma";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-const ALLOWED = new Set(["background", "decoration", "logo"]);
+const ALLOWED = new Set(["background", "decoration", "logo", "eyebrow", "headline", "body"]);
 
 export const maxDuration = 60;
 
