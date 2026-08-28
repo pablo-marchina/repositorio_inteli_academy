@@ -102,29 +102,37 @@ export async function verifyFigmaReadAccess() {
   return { ok: true as const, fileName: payload.name ?? "ID Academy", lastModified: payload.lastModified ?? null, version: payload.version ?? null };
 }
 
+function collectFrameCandidates(node: FigmaRestNode, pageName: string, output: FigmaDesignSystemDiscovery["candidateFrames"]) {
+  if (node.visible === false) return;
+  if (node.type === "FRAME" && node.id) {
+    const width = node.absoluteBoundingBox?.width ?? 0;
+    const height = node.absoluteBoundingBox?.height ?? 0;
+    if (width > 0 && height > 0) {
+      output.push({ id: node.id, name: node.name ?? "", pageName, width, height });
+    }
+  }
+  for (const child of node.children ?? []) collectFrameCandidates(child, pageName, output);
+}
+
 /**
- * Discover the real design-system surface instead of assuming a page name.
- * The returned candidates are intentionally generic; editorial archetype and
- * requested output dimensions are scored by the Figma plugin at import time.
+ * Discover the real design-system surface instead of assuming a page name or
+ * that reusable frames are direct children of a page. Sections/groups/nested
+ * frames are traversed recursively; editorial intent and requested dimensions
+ * are scored later by the plugin.
  */
 export async function discoverFigmaDesignSystem(): Promise<FigmaDesignSystemDiscovery> {
   const config = figmaConfig();
-  const payload = await figmaRequest<{ name?: string; document?: FigmaRestNode }>(`files/${config.FIGMA_FILE_KEY}`, { depth: "2" });
+  const payload = await figmaRequest<{ name?: string; document?: FigmaRestNode }>(`files/${config.FIGMA_FILE_KEY}`, { depth: "4" });
   const pages = (payload.document?.children ?? []).filter((node) => node.type === "CANVAS" && node.visible !== false);
-  const candidateFrames = pages.flatMap((page) => (page.children ?? [])
-    .filter((node) => node.type === "FRAME" && node.visible !== false && node.id)
-    .map((node) => ({
-      id: node.id!,
-      name: node.name ?? "",
-      pageName: page.name ?? "",
-      width: node.absoluteBoundingBox?.width ?? 0,
-      height: node.absoluteBoundingBox?.height ?? 0
-    }))
-    .filter((frame) => frame.width > 0 && frame.height > 0));
+  const candidateFrames: FigmaDesignSystemDiscovery["candidateFrames"] = [];
+  for (const page of pages) {
+    for (const child of page.children ?? []) collectFrameCandidates(child, page.name ?? "", candidateFrames);
+  }
+  const uniqueFrames = [...new Map(candidateFrames.map((frame) => [frame.id, frame])).values()];
   return {
     fileName: payload.name ?? "ID Academy",
     pageNames: pages.map((page) => page.name ?? "").filter(Boolean),
-    candidateFrames,
+    candidateFrames: uniqueFrames,
     discoveredAt: new Date().toISOString()
   };
 }
@@ -184,6 +192,9 @@ function primaryBrandCandidate(node: FigmaRestNode) {
 function inferBrandRoles(root: FigmaRestNode | undefined, frameBox: FigmaRestNode["absoluteBoundingBox"], roles: Record<string, SemanticItem[]>) {
   if (!root || !frameBox?.width || !frameBox.height) return;
   const frameArea = frameBox.width * frameBox.height;
+  const all: FigmaRestNode[] = [];
+  collectNodes(root, all);
+  const visible = all.filter((node) => node !== root && node.visible !== false && node.id && node.type && node.absoluteBoundingBox);
   const direct = (root.children ?? []).filter((node) => node.visible !== false && node.id && node.type && node.absoluteBoundingBox);
   const tagged = new Set(Object.values(roles).flat().map((item) => item.id));
 
@@ -197,9 +208,10 @@ function inferBrandRoles(root: FigmaRestNode | undefined, frameBox: FigmaRestNod
   }
 
   // Explicit AI::primaryLogo / AI::partnerLogo tags always win. For legacy
-  // templates, only the owned Academy mark is inferred automatically.
+  // templates, search all descendants for evidence of the owned Academy mark;
+  // no layer number or historical frame name is assumed.
   if (!roles.primaryLogo?.length) {
-    const primary = direct.find(primaryBrandCandidate);
+    const primary = visible.find(primaryBrandCandidate);
     pushRole(roles, "primaryLogo", primary ? relativeItem(primary, frameBox) : null);
   }
   if (!roles.primaryLogo?.length && roles.logo?.length) {
