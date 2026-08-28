@@ -1,0 +1,38 @@
+name: Apply AI video editing implementation
+
+on:
+  push:
+    branches: ["feat/ai-video-editing-davinci"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-ai-video-editing-davinci
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[ai-video-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/ai-video-editing-davinci
+          fetch-depth: 0
+      - name: Reassemble implementation patch
+        run: |
+          cat .github/ai-video-davinci.patch.gz.b64.* > /tmp/ai-video.patch.b64
+          base64 -d /tmp/ai-video.patch.b64 | gunzip > /tmp/ai-video.patch
+          patch -p1 --forward < /tmp/ai-video.patch
+      - name: Remove temporary staging files
+        run: |
+          rm -f .github/ai-video-davinci.patch.gz.b64.*
+          rm -f .github/workflows/apply-ai-video-davinci.yml
+      - name: Commit implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Implement AI video editing and DaVinci export [ai-video-applied]"
+          git push origin HEAD:feat/ai-video-editing-davinci
