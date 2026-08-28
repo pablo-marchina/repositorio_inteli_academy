@@ -44,6 +44,29 @@ jobs:
           done
           patch --dry-run -p1 --forward --batch < /tmp/ai-video.patch
           patch -p1 --forward --batch < /tmp/ai-video.patch
+      - name: Apply backward-compatible timeline fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          analysis = Path('lib/studio-reel-analysis.ts')
+          text = analysis.read_text()
+          if 'function isReelReference(' not in text:
+              marker = re.search(r'function isVisualAsset\(asset: DriveAsset\) \{.*?\n\}', text, re.S)
+              if not marker:
+                  raise SystemExit('Could not locate isVisualAsset helper')
+              helper = '''\n\nfunction isReelReference(reference: InstagramReferencePost) {\n  return reference.mediaType === "VIDEO" || reference.mediaProductType === "REELS" || reference.mediaProductType === "REEL";\n}'''
+              text = text[:marker.end()] + helper + text[marker.end():]
+          text = re.sub(r'(\n\s*)transitionDurationSeconds:\s*number;', r'\1transitionDurationSeconds?: number;', text, count=1)
+          analysis.write_text(text)
+
+          artifact = Path('lib/studio-artifact.ts')
+          artifact_text = artifact.read_text()
+          artifact_text = artifact_text.replace('shot.transitionDurationSeconds * fps', '(shot.transitionDurationSeconds ?? 0) * fps')
+          artifact.write_text(artifact_text)
+          PY
           rm -rf .github/ai-video-patch
           rm -f .github/workflows/apply-ai-video-patch.yml
       - uses: actions/setup-node@v5
