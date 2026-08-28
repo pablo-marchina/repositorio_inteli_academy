@@ -17,8 +17,13 @@ export async function GET(request: Request, context: { params: Promise<{ fileId:
     if (!jobId) throw new Error("job ausente.");
     const { data, error } = await createAdminClient().from("figma_jobs").select("payload").eq("id", jobId).maybeSingle();
     if (error) throw error;
-    const payload = data?.payload as { driveAssets?: Array<{ id?: string }> } | undefined;
-    if (!payload?.driveAssets?.some((asset) => asset.id === fileId)) throw new Error("Asset não pertence a este job do Figma.");
+    const payload = data?.payload as {
+      driveAssets?: Array<{ id?: string }>;
+      payload?: { brandContext?: { partnerLogoAssetId?: string } };
+    } | undefined;
+    const editorialAsset = payload?.driveAssets?.some((asset) => asset.id === fileId) ?? false;
+    const explicitPartnerLogo = payload?.payload?.brandContext?.partnerLogoAssetId === fileId;
+    if (!editorialAsset && !explicitPartnerLogo) throw new Error("Asset não pertence a este job do Figma.");
     const { asset, bytes } = await downloadDriveAsset(fileId);
     if (!asset.mimeType.startsWith("image/")) throw new Error("O plugin visual importa imagens; vídeos permanecem como mídia principal do Reel.");
     return new Response(bytes, {

@@ -80,6 +80,13 @@ type SemanticItem = {
   style?: FigmaRestNode["style"];
 };
 
+export type FigmaDesignSystemDiscovery = {
+  fileName: string;
+  pageNames: string[];
+  candidateFrames: Array<{ id: string; name: string; pageName: string; width: number; height: number }>;
+  discoveredAt: string;
+};
+
 async function figmaRequest<T>(path: string, search?: Record<string, string>): Promise<T> {
   const config = figmaConfig();
   const url = new URL(`https://api.figma.com/v1/${path.replace(/^\//, "")}`);
@@ -93,6 +100,41 @@ export async function verifyFigmaReadAccess() {
   const config = figmaConfig();
   const payload = await figmaRequest<{ name?: string; lastModified?: string; version?: string }>(`files/${config.FIGMA_FILE_KEY}`, { depth: "1" });
   return { ok: true as const, fileName: payload.name ?? "ID Academy", lastModified: payload.lastModified ?? null, version: payload.version ?? null };
+}
+
+function collectFrameCandidates(node: FigmaRestNode, pageName: string, output: FigmaDesignSystemDiscovery["candidateFrames"]) {
+  if (node.visible === false) return;
+  if (node.type === "FRAME" && node.id) {
+    const width = node.absoluteBoundingBox?.width ?? 0;
+    const height = node.absoluteBoundingBox?.height ?? 0;
+    if (width > 0 && height > 0) {
+      output.push({ id: node.id, name: node.name ?? "", pageName, width, height });
+    }
+  }
+  for (const child of node.children ?? []) collectFrameCandidates(child, pageName, output);
+}
+
+/**
+ * Discover the real design-system surface instead of assuming a page name or
+ * that reusable frames are direct children of a page. Sections/groups/nested
+ * frames are traversed recursively; editorial intent and requested dimensions
+ * are scored later by the plugin.
+ */
+export async function discoverFigmaDesignSystem(): Promise<FigmaDesignSystemDiscovery> {
+  const config = figmaConfig();
+  const payload = await figmaRequest<{ name?: string; document?: FigmaRestNode }>(`files/${config.FIGMA_FILE_KEY}`, { depth: "4" });
+  const pages = (payload.document?.children ?? []).filter((node) => node.type === "CANVAS" && node.visible !== false);
+  const candidateFrames: FigmaDesignSystemDiscovery["candidateFrames"] = [];
+  for (const page of pages) {
+    for (const child of page.children ?? []) collectFrameCandidates(child, page.name ?? "", candidateFrames);
+  }
+  const uniqueFrames = [...new Map(candidateFrames.map((frame) => [frame.id, frame])).values()];
+  return {
+    fileName: payload.name ?? "ID Academy",
+    pageNames: pages.map((page) => page.name ?? "").filter(Boolean),
+    candidateFrames: uniqueFrames,
+    discoveredAt: new Date().toISOString()
+  };
 }
 
 export async function getCurrentFigmaNodes(nodeIds: string[]) {
@@ -138,9 +180,21 @@ function pushRole(roles: Record<string, SemanticItem[]>, role: string, item: Sem
   if (!roles[role].some((candidate) => candidate.id === item.id)) roles[role].push(item);
 }
 
+function normalized(value: string | undefined) {
+  return String(value ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function primaryBrandCandidate(node: FigmaRestNode) {
+  const value = `${normalized(node.name)} ${normalized(node.characters)}`;
+  return /(?:^|\s)(inteli academy|academy|ia)(?:\s|$)/.test(value) && !/parceir|partner|cliente|empresa/.test(value);
+}
+
 function inferBrandRoles(root: FigmaRestNode | undefined, frameBox: FigmaRestNode["absoluteBoundingBox"], roles: Record<string, SemanticItem[]>) {
   if (!root || !frameBox?.width || !frameBox.height) return;
   const frameArea = frameBox.width * frameBox.height;
+  const all: FigmaRestNode[] = [];
+  collectNodes(root, all);
+  const visible = all.filter((node) => node !== root && node.visible !== false && node.id && node.type && node.absoluteBoundingBox);
   const direct = (root.children ?? []).filter((node) => node.visible !== false && node.id && node.type && node.absoluteBoundingBox);
   const tagged = new Set(Object.values(roles).flat().map((item) => item.id));
 
@@ -153,10 +207,21 @@ function inferBrandRoles(root: FigmaRestNode | undefined, frameBox: FigmaRestNod
     pushRole(roles, "background", background ? relativeItem(background, frameBox) : null);
   }
 
-  if (!roles.logo?.length) {
-    const logo = direct.find((node) => /(?:^|\s)(logo|academy|inteli|ia)(?:\s|$)/i.test(node.name ?? "") && !hasImageFill(node));
-    pushRole(roles, "logo", logo ? relativeItem(logo, frameBox) : null);
+  // Explicit AI::primaryLogo / AI::partnerLogo tags always win. For legacy
+  // templates, search all descendants for evidence of the owned Academy mark;
+  // no layer number or historical frame name is assumed.
+  if (!roles.primaryLogo?.length) {
+    const primary = visible.find(primaryBrandCandidate);
+    pushRole(roles, "primaryLogo", primary ? relativeItem(primary, frameBox) : null);
   }
+  if (!roles.primaryLogo?.length && roles.logo?.length) {
+    pushRole(roles, "primaryLogo", roles.logo[0]);
+  }
+
+  // Keep `logo` as a backwards-compatible render alias containing both owned
+  // and partner marks. The semantic QA still sees the two roles separately.
+  for (const item of roles.primaryLogo ?? []) pushRole(roles, "logo", item);
+  for (const item of roles.partnerLogo ?? []) pushRole(roles, "logo", item);
 
   const backgroundIds = new Set((roles.background ?? []).map((item) => item.id));
   const decorationCandidates = direct

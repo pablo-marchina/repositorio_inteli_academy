@@ -31,6 +31,8 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
   const [selectedArticles, setSelectedArticles] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [userContext, setUserContext] = useState("");
+  const [partnerName, setPartnerName] = useState("");
+  const [partnerLogoAssetId, setPartnerLogoAssetId] = useState("");
   const [references, setReferences] = useState(initialReferences);
   const [selectedReferences, setSelectedReferences] = useState<string[]>([]);
   const [useDrive, setUseDrive] = useState(false);
@@ -53,11 +55,13 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       : asset.mimeType.startsWith("image/")),
     [driveAssets, contentType]
   );
+  const logoAssets = useMemo(() => driveAssets.filter((asset) => asset.mimeType.startsWith("image/")), [driveAssets]);
 
   const selectedVideoCount = selectedAssets.filter((id) => driveAssets.find((asset) => asset.id === id)?.mimeType.startsWith("video/")).length;
   const selectedImageCount = selectedAssets.filter((id) => driveAssets.find((asset) => asset.id === id)?.mimeType.startsWith("image/")).length;
   const selectedVisualCount = selectedVideoCount + selectedImageCount;
   const selectedAudio = selectedAssets.map((id) => driveAssets.find((asset) => asset.id === id)).find((asset) => asset?.mimeType.startsWith("audio/"));
+  const selectedPartnerLogo = logoAssets.find((asset) => asset.id === partnerLogoAssetId);
 
   function toggleArticle(id: string) {
     setSelectedArticles((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < MAX_STUDIO_ARTICLES ? [...current, id] : current);
@@ -85,10 +89,8 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
     }
   }
 
-  async function enableDrive(checked: boolean) {
-    setUseDrive(checked);
-    setSelectedAssets([]);
-    if (!checked || driveAssets.length || !driveConnected) return;
+  async function loadDriveLibrary() {
+    if (driveAssets.length || !driveConnected) return;
     setLoadingDrive(true);
     setError("");
     try {
@@ -101,6 +103,12 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
     } finally {
       setLoadingDrive(false);
     }
+  }
+
+  async function enableDrive(checked: boolean) {
+    setUseDrive(checked);
+    setSelectedAssets([]);
+    if (checked) await loadDriveLibrary();
   }
 
   function toggleAsset(id: string) {
@@ -118,15 +126,25 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
 
   async function generate() {
     setError("");
-    if (useDrive && !selectedAssets.length) return setError("O uso do Drive está habilitado; escolha pelo menos uma mídia.");
+    if (useDrive && !selectedAssets.length) return setError("O uso do Drive está habilitado; escolha pelo menos uma mídia editorial.");
     if (contentType === "reel" && !selectedVisualCount) return setError("Reel requer pelo menos um vídeo ou uma imagem selecionada do Drive.");
     if (contentType === "reel" && !selectedVideoCount) return setError("Reel requer pelo menos um vídeo; as fotos selecionadas entram como shots complementares da montagem.");
+    if (partnerLogoAssetId && !partnerName.trim()) return setError("Informe o nome do parceiro associado à logo selecionada.");
     setGenerating(true);
     try {
       const response = await fetch("/api/studio/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ contentType, articleIds: selectedArticles, userContext, instagramReferenceMediaIds: selectedReferences, useDrive, driveAssetIds: selectedAssets })
+        body: JSON.stringify({
+          contentType,
+          articleIds: selectedArticles,
+          userContext,
+          instagramReferenceMediaIds: selectedReferences,
+          useDrive,
+          driveAssetIds: selectedAssets,
+          partnerName: partnerName.trim() || undefined,
+          partnerLogoAssetId: partnerLogoAssetId || undefined
+        })
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Falha ao gerar conteúdo.");
@@ -169,12 +187,26 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       </section>
 
       <section className={styles.section}>
+        <h2>4. Marca parceira <small>(opcional)</small></h2>
+        <p>Para visitas, cases, parcerias e eventos com empresas, informe a organização e selecione uma logo oficial já autorizada no Drive. A logo é tratada como asset de marca e nunca entra no pool de fotos/shots do conteúdo.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) minmax(260px, 1fr)", gap: 12 }}>
+          <input className={styles.search} value={partnerName} onChange={(event) => { setPartnerName(event.target.value); if (!event.target.value.trim()) setPartnerLogoAssetId(""); }} placeholder="Nome do parceiro, ex.: Empresa X" />
+          {driveConnected ? <select className={styles.search} value={partnerLogoAssetId} onFocus={() => void loadDriveLibrary()} onChange={(event) => setPartnerLogoAssetId(event.target.value)}>
+            <option value="">Sem logo selecionada</option>
+            {logoAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
+          </select> : <a href="/api/drive/connect">Conecte o Google Drive para selecionar uma logo oficial</a>}
+        </div>
+        {driveConnected && !driveAssets.length ? <button className={styles.secondary} type="button" disabled={loadingDrive} onClick={() => void loadDriveLibrary()}>{loadingDrive ? "Carregando…" : "Carregar imagens do Drive"}</button> : null}
+        {selectedPartnerLogo ? <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}><img src={`/api/drive/preview/${encodeURIComponent(selectedPartnerLogo.id)}`} alt="Logo parceira selecionada" style={{ width: 72, height: 48, objectFit: "contain", borderRadius: 8, background: "white" }} /><span className={styles.count}>Asset de marca: {selectedPartnerLogo.name} · não será usado como footage</span></div> : partnerName.trim() ? <p className={styles.count}>Sem logo autorizada: a versão pode ser gerada para revisão, mas a aprovação final ficará bloqueada até a marca ser resolvida.</p> : null}
+      </section>
+
+      <section className={styles.section}>
         <div className={styles.toolbar}>
-          <div><h2>4. Posts reais do Instagram como referência <small>(opcional)</small></h2><p>Ao escolher um Reel, o sistema lê a duração, a quantidade de shots, os cortes, o ritmo, motion e timing do vídeo real. A montagem gerada segue essa estrutura temporal em vez de usar uma quantidade fixa de cortes.</p></div>
+          <div><h2>5. Posts reais do Instagram como referência <small>(opcional)</small></h2><p>Ao escolher um Reel, o sistema lê timing, composição, mudanças entre cortes e, quando disponível, função narrativa. A referência define a estrutura; o Figma e os assets autorizados definem a identidade.</p></div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}><span className={styles.count}>{selectedReferences.length}/{MAX_STUDIO_REFERENCES} selecionados</span><button className={styles.secondary} type="button" disabled={syncingInstagram} onClick={syncReferences}>{syncingInstagram ? "Sincronizando…" : "Sincronizar @inteli.academy"}</button></div>
         </div>
         <div className={styles.referenceGrid}>
-          <button type="button" className={`${styles.reference} ${selectedReferences.length === 0 ? styles.referenceActive : ""}`} onClick={() => setSelectedReferences([])}><div className={styles.referenceImage} /><div className={styles.referenceBody}><strong>Sem referências específicas</strong><span>Usar o histórico real completo + Social Media como principal fonte visual do Figma.</span></div></button>
+          <button type="button" className={`${styles.reference} ${selectedReferences.length === 0 ? styles.referenceActive : ""}`} onClick={() => setSelectedReferences([])}><div className={styles.referenceImage} /><div className={styles.referenceBody}><strong>Sem referências específicas</strong><span>Usar o histórico real completo + design system descoberto no Figma.</span></div></button>
           {references.map((reference) => {
             const image = reference.thumbnail_url ?? reference.media_url;
             const active = selectedReferences.includes(reference.id);
@@ -187,12 +219,12 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       </section>
 
       <section className={styles.section}>
-        <div className={styles.toolbar}><div><h2>5. Mídia do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} mídias: mantenha pelo menos um vídeo e adicione quantas fotos fizerem sentido para ampliar o pool de montagem; você também pode escolher uma faixa de áudio. A referência determina a quantidade e a cadência dos shots.` : `O sistema só pode usar os arquivos que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => enableDrive(event.target.checked)} /> Usar Drive</label></div>
+        <div className={styles.toolbar}><div><h2>6. Mídia editorial do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} mídias de conteúdo: pelo menos um vídeo, fotos complementares e opcionalmente uma faixa de áudio. Logos selecionadas acima ficam fora deste pool.` : `O sistema só pode usar os arquivos editoriais que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => void enableDrive(event.target.checked)} /> Usar Drive</label></div>
         {!driveConnected ? <p><a href="/api/drive/connect">Conecte o Google Drive em Configurações</a> para habilitar a biblioteca.</p> : null}
         {loadingDrive ? <p>Carregando biblioteca de mídia…</p> : null}
         {useDrive && !loadingDrive ? <>
           <span className={styles.count}>{selectedAssets.length}/{MAX_STUDIO_DRIVE_ASSETS} selecionados · {contentType === "reel" ? `${selectedVideoCount} vídeo(s) · ${selectedImageCount} foto(s)${selectedAudio ? ` · trilha: ${selectedAudio.name}` : " · áudio dos takes"}` : "imagens"}</span>
-          <div className={styles.mediaGrid}>{compatibleAssets.map((asset) => {
+          <div className={styles.mediaGrid}>{compatibleAssets.filter((asset) => asset.id !== partnerLogoAssetId).map((asset) => {
             const isVideo = asset.mimeType.startsWith("video/");
             const isAudio = asset.mimeType.startsWith("audio/");
             const isImage = asset.mimeType.startsWith("image/");
@@ -206,7 +238,7 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       </section>
 
       <div className={styles.footer}>
-        <div><strong>Pronto para gerar a V1</strong><div className={styles.count}>{selectedArticles.length} artigo(s) · {selectedReferences.length ? `${selectedReferences.length} referência(s) específica(s)` : "histórico geral"} · {selectedAssets.length} mídia(s) do Drive</div>{error ? <div className={styles.feedback}>{error}</div> : null}</div>
+        <div><strong>Pronto para gerar a V1</strong><div className={styles.count}>{selectedArticles.length} artigo(s) · {selectedReferences.length ? `${selectedReferences.length} referência(s) específica(s)` : "histórico geral"} · {selectedAssets.length} mídia(s) editorial(is){partnerLogoAssetId ? " · 1 logo de parceiro" : ""}</div>{error ? <div className={styles.feedback}>{error}</div> : null}</div>
         <button className={styles.primary} type="button" disabled={generating} onClick={generate}>{generating ? "Analisando mídia e gerando…" : "Gerar versão visual"}</button>
       </div>
     </div>

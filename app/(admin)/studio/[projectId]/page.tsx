@@ -1,10 +1,12 @@
 import { notFound } from "next/navigation";
 import { ContentWorkbench } from "@/components/ContentWorkbench";
 import { StructuredStudioPanel } from "@/components/StructuredStudioPanel";
+import { StudioBrandResolver } from "@/components/StudioBrandResolver";
 import { StudioMotionControl } from "@/components/StudioMotionControl";
 import { requireAdmin } from "@/lib/auth";
 import { studioPayloadSchema } from "@/lib/studio-ai";
 import type { StructuredStudioPayload } from "@/lib/studio-artifact";
+import { effectiveBrandContext } from "@/lib/studio-post-archetype";
 import type { DriveAsset } from "@/lib/types";
 
 export default async function StudioProjectPage({ params }: { params: Promise<{ projectId: string }> }) {
@@ -59,12 +61,15 @@ export default async function StudioProjectPage({ params }: { params: Promise<{ 
     last_error: project.last_error ? String(project.last_error) : null,
     drive_assets: Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : []
   };
+  const latestVersion = versions[0];
+  const brand = latestVersion ? effectiveBrandContext(latestVersion.payload) : { primaryBrandName: "Inteli Academy" as const, partnerLogoStatus: "not-required" as const };
   const motionVersion = normalizedProject.content_type === "reel" ? versions.find((version) => version.payload.artifact?.videoTimeline) : undefined;
 
   return (
     <>
       <header className="page-header"><div><span className="eyebrow">Content Studio</span><h1>{normalizedProject.name}</h1><p>Compare versões estruturadas, refine por linguagem natural, edite no Figma sem perder a identidade e publique somente depois da revisão final.</p></div></header>
       <StructuredStudioPanel projectId={normalizedProject.id} driveAssets={normalizedProject.drive_assets} versions={versions} initialVersionId={normalizedProject.selected_version_id} referenceMediaUrl={referenceMediaUrl} />
+      <StudioBrandResolver projectId={normalizedProject.id} initialPartnerName={brand.partnerName} initialPartnerLogoAssetId={brand.partnerLogoAssetId} />
       {motionVersion ? <StudioMotionControl projectId={normalizedProject.id} versionId={motionVersion.id} versionNumber={motionVersion.version_number} /> : null}
       <ContentWorkbench project={normalizedProject} versions={versions} provenance={{ articles: articles ?? [], references: orderedReferences, userContext: String(project.user_context ?? "") }} />
     </>

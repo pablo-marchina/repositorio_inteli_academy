@@ -117,6 +117,35 @@ export type EngagementMetrics = {
 export type StudioContentType = "single" | "carousel" | "reel" | "story";
 export type StudioFrameTemplate = "cover" | "editorial" | "stat" | "quote" | "photo" | "cta";
 
+/**
+ * Editorial intent is independent from the concrete Figma layout.  This keeps
+ * the generator reusable across feed posts, carousels, Stories and Reels while
+ * allowing the design-system resolver to choose the best real template later.
+ */
+export type StudioPostArchetype =
+  | "partnership"
+  | "event-recap"
+  | "case"
+  | "announcement"
+  | "educational"
+  | "results"
+  | "people"
+  | "quote"
+  | "cta"
+  | "general";
+
+export type StudioBrandContext = {
+  /** The owned brand is always explicit; never infer it from incidental pixels. */
+  primaryBrandName: "Inteli Academy";
+  /** Optional external organization represented by the content. */
+  partnerName?: string;
+  /** Only an explicitly authorized image asset may be used as a partner logo. */
+  partnerLogoAssetId?: string;
+  partnerLogoSource?: "drive-user-authorized" | "figma-verified";
+  /** Missing means the generator must not fabricate or redraw a partner mark. */
+  partnerLogoStatus: "not-required" | "ready" | "missing";
+};
+
 export type DriveAsset = {
   id: string;
   name: string;
@@ -166,4 +195,8 @@ export type StudioPayload = {
   factualClaims: Array<{ claim: string; sourceUrl: string }>;
   primaryDriveAssetId?: string;
   styleSummary: string;
+  /** Generic editorial structure used by all social formats. */
+  postArchetype?: StudioPostArchetype;
+  /** Explicit primary/partner brand ownership; logos are never invented. */
+  brandContext?: StudioBrandContext;
 };
