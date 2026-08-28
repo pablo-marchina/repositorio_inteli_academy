@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 
-// Every executable path that can influence generated post content or visuals.
-// Documentation/inventory files are intentionally excluded from historical-name
-// checks because they may describe past work without affecting generation.
+// Every executable path that can influence generated post content, visuals or
+// portable editor output. Documentation/inventory files are intentionally
+// excluded because they may describe past work without affecting execution.
 const generationFiles = [
   "app/api/studio/generate/route.ts",
   "lib/ai.ts",
@@ -20,8 +20,11 @@ const generationFiles = [
   "lib/studio-post-archetype.ts",
   "lib/studio-reel-analysis.ts",
   "lib/studio-reel-render.ts",
+  "lib/studio-editor-export.ts",
   "lib/studio-davinci-export.ts",
+  "lib/studio-nle-export.ts",
   "app/api/studio/[projectId]/versions/[versionId]/davinci/route.ts",
+  "app/api/studio/[projectId]/versions/[versionId]/nle/route.ts",
   "lib/studio-reference-style.ts",
   "lib/studio-brand-critic.ts",
   "lib/figma.ts",
