@@ -61,6 +61,8 @@ function clipForTrack(track: StudioVideoTrack, timeline: StudioVideoTimeline, me
         transition: track.transition ?? null,
         transitionDurationInFrames: track.transitionDurationInFrames ?? 0,
         volume: track.volume ?? null,
+        muted: track.muted ?? false,
+        sourceAudioAnalysis: track.sourceAudioAnalysis ?? null,
         musicDirection: track.musicDirection ?? null
       }
     },
