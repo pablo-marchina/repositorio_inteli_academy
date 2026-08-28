@@ -39,7 +39,13 @@ function FallbackText({ track, text, layout, role }: { track: StudioVideoTrack; 
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const item = layoutItems(layout, role)[0];
-  const box = item?.box && layout?.frameBox?.width && layout.frameBox.height ? { left: item.box.x / layout.frameBox.width * width, top: item.box.y / layout.frameBox.height * height, width: item.box.width / layout.frameBox.width * width, height: item.box.height / layout.frameBox.height * height } : role === "headline" ? { left: width * .08, top: height * .58, width: width * .84, height: height * .24 } : role === "eyebrow" ? { left: width * .08, top: height * .52, width: width * .84, height: height * .08 } : { left: width * .08, top: height * .72, width: width * .84, height: height * .14 };
+  const box = item?.box && layout?.frameBox?.width && layout.frameBox.height
+    ? { left: item.box.x / layout.frameBox.width * width, top: item.box.y / layout.frameBox.height * height, width: item.box.width / layout.frameBox.width * width, height: item.box.height / layout.frameBox.height * height }
+    : role === "headline"
+      ? { left: width * .08, top: height * .58, width: width * .84, height: height * .24 }
+      : role === "eyebrow"
+        ? { left: width * .08, top: height * .52, width: width * .84, height: height * .08 }
+        : { left: width * .08, top: height * .72, width: width * .84, height: height * .14 };
   const style = item?.style;
   const fontSize = style?.fontSize ? style.fontSize / (layout?.frameBox?.width || width) * width : role === "headline" ? 82 : role === "eyebrow" ? 28 : 34;
   return <div style={{ position: "absolute", ...box, color: "white", fontFamily: style?.fontFamily ? `${style.fontFamily}, sans-serif` : "Figtree, Inter, sans-serif", fontSize, fontWeight: style?.fontWeight ?? (role === "headline" ? 800 : 600), lineHeight: style?.lineHeightPx && style.fontSize ? style.lineHeightPx / style.fontSize : 1.08, textAlign: style?.textAlignHorizontal === "CENTER" ? "center" : style?.textAlignHorizontal === "RIGHT" ? "right" : "left", overflow: "hidden", ...entrance(frame, fps, track.durationInFrames) }}>{text}</div>;
@@ -59,12 +65,17 @@ export function AcademyVideoComposition({ payload, timeline, assetUrls, figmaLay
     {footage.map((track) => {
       const src = track.assetId ? assetUrls[track.assetId] : undefined;
       if (!src) return null;
-      const crop = track.crop ?? { focalX: .5, focalY: .5, zoom: 1 };
+      const crop = track.crop ?? { focalX: .5, focalY: .5, endFocalX: .5, endFocalY: .5, zoom: 1 };
       const local = frame - track.startFrame;
+      const lastLocalFrame = Math.max(1, track.durationInFrames - 1);
+      const focalX = interpolate(local, [0, lastLocalFrame], [crop.focalX, crop.endFocalX ?? crop.focalX], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+      const focalY = interpolate(local, [0, lastLocalFrame], [crop.focalY, crop.endFocalY ?? crop.focalY], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
       const fadeFrames = track.transition === "dissolve" ? Math.max(1, Math.round(.12 * fps)) : 1;
-      const opacity = track.transition === "dissolve" ? interpolate(local, [0, fadeFrames, Math.max(fadeFrames, track.durationInFrames - fadeFrames), track.durationInFrames], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1;
+      const opacity = track.transition === "dissolve"
+        ? interpolate(local, [0, fadeFrames, Math.max(fadeFrames, track.durationInFrames - fadeFrames), track.durationInFrames], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
+        : 1;
       return <Sequence key={track.id} from={track.startFrame} durationInFrames={track.durationInFrames}>
-        <Video src={src} startFrom={track.sourceStartFrame ?? 0} muted={music ? true : Boolean(track.muted)} volume={music ? 0 : track.volume ?? .72} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: `${clamp(crop.focalX, 0, 1) * 100}% ${clamp(crop.focalY, 0, 1) * 100}%`, transform: `scale(${crop.zoom || 1})`, opacity }} />
+        <Video src={src} startFrom={track.sourceStartFrame ?? 0} muted={music ? true : Boolean(track.muted)} volume={music ? 0 : track.volume ?? .72} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: `${clamp(focalX, 0, 1) * 100}% ${clamp(focalY, 0, 1) * 100}%`, transform: `scale(${crop.zoom || 1})`, opacity }} />
       </Sequence>;
     })}
 
