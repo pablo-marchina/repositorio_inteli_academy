@@ -88,7 +88,8 @@ type LayerInput = {
 async function downloadFigmaLayers(payload: StructuredStudioPayload, frameId: string, dir: string) {
   const [semantic] = await getCurrentFigmaSemanticState([frameId]);
   const timeline = payload.artifact!.videoTimeline!;
-  const roles = ["decoration", "logo", "eyebrow", "headline", "body"];
+  const roles = ["decoration", "brandElement", "mascot", "primaryLogo", "partnerLogo", "eyebrow", "headline", "body"];
+  const seenNodeIds = new Set<string>();
   const requests: Array<{
     role: string;
     id: string;
@@ -103,7 +104,8 @@ async function downloadFigmaLayers(payload: StructuredStudioPayload, frameId: st
       : { start: 0, duration: timeline.durationInFrames / timeline.fps };
     if (!window) continue;
     for (const item of semantic.roles[role] ?? []) {
-      if (!item.id || !item.box || item.box.width < 1 || item.box.height < 1) continue;
+      if (!item.id || seenNodeIds.has(item.id) || !item.box || item.box.width < 1 || item.box.height < 1) continue;
+      seenNodeIds.add(item.id);
       requests.push({ role, id: item.id, item, start: window.start, duration: window.duration });
     }
   }
@@ -150,7 +152,7 @@ function visualFilter(track: StudioVideoTrack, inputIndex: number, fps: number, 
   const timing = track.kind === "image"
     ? `trim=duration=${duration.toFixed(4)},setpts=PTS-STARTPTS`
     : `trim=start=${((track.sourceStartFrame ?? 0) / fps).toFixed(4)}:end=${((track.sourceEndFrame ?? ((track.sourceStartFrame ?? 0) + track.durationInFrames)) / fps).toFixed(4)},setpts=PTS-STARTPTS`;
-  return `[${inputIndex}:v]${timing},scale='${scaleWidth}':'${scaleHeight}',crop=${WIDTH}:${HEIGHT}:'${x}':'${y}',fps=${fps},setsar=1,format=yuv420p[${output}]`;
+  return `[${inputIndex}:v]${timing},scale='${scaleWidth}':'${scaleHeight}',crop=${WIDTH}:${HEIGHT}:'${x}':'${y}',fps=${fps},settb=AVTB,setsar=1,format=yuv420p[${output}]`;
 }
 
 async function renderWithFfmpeg(input: {
@@ -212,7 +214,34 @@ async function renderWithFfmpeg(input: {
   if (footage.length === 1) {
     filters.push("[shotv0]null[vcuts]");
   } else {
-    filters.push(`${footage.map((_, index) => `[shotv${index}]`).join("")}concat=n=${footage.length}:v=1:a=0[vcuts]`);
+    filters.push("[shotv0]null[vseq0]");
+    let accumulated = footage[0].durationInFrames / timeline.fps;
+    const transitionName: Record<NonNullable<StudioVideoTrack["transition"]>, string> = {
+      cut: "fade",
+      dissolve: "dissolve",
+      whip: "slideleft",
+      zoom: "zoomin",
+      blur: "hblur",
+      push: "smoothleft"
+    };
+    for (let index = 1; index < footage.length; index += 1) {
+      const previous = footage[index - 1];
+      const current = footage[index];
+      const overlapFrames = Math.max(0, previous.startFrame + previous.durationInFrames - current.startFrame);
+      const requestedFrames = Math.max(0, current.transitionDurationInFrames ?? overlapFrames);
+      const transitionFrames = Math.min(overlapFrames, requestedFrames, Math.floor(previous.durationInFrames * .24), Math.floor(current.durationInFrames * .24));
+      const transitionSeconds = transitionFrames / timeline.fps;
+      const next = `vseq${index}`;
+      if ((current.transition ?? "cut") === "cut" || transitionSeconds < .03) {
+        filters.push(`[vseq${index - 1}][shotv${index}]concat=n=2:v=1:a=0[${next}]`);
+        accumulated += current.durationInFrames / timeline.fps;
+      } else {
+        const offset = Math.max(0, accumulated - transitionSeconds);
+        filters.push(`[vseq${index - 1}][shotv${index}]xfade=transition=${transitionName[current.transition ?? "dissolve"]}:duration=${transitionSeconds.toFixed(4)}:offset=${offset.toFixed(4)}[${next}]`);
+        accumulated += current.durationInFrames / timeline.fps - transitionSeconds;
+      }
+    }
+    filters.push(`[vseq${footage.length - 1}]null[vcuts]`);
   }
 
   const total = timeline.durationInFrames / timeline.fps;
@@ -222,7 +251,7 @@ async function renderWithFfmpeg(input: {
   } else {
     const audioFlags = await Promise.all(footage.map((track) => track.kind === "image" ? Promise.resolve(false) : hasAudio(local.get(track.assetId!)!)));
     if (!audioFlags.some(Boolean)) {
-      throw new Error("Os visuais selecionados não fornecem áudio. Selecione uma faixa de áudio no Drive antes de renderizar o Reel final.");
+      throw new Error("Os visuais selecionados não fornecem áudio e a IA não encontrou uma trilha autorizada disponível no Drive para este Reel.");
     }
     footage.forEach((track, index) => {
       const shotDuration = track.durationInFrames / timeline.fps;
@@ -245,13 +274,17 @@ async function renderWithFfmpeg(input: {
     const next = `vlay${index}`;
     const w = Math.max(1, Math.round(layer.width));
     const h = Math.max(1, Math.round(layer.height));
-    if (["eyebrow", "headline", "body"].includes(layer.role)) {
-      const fade = Math.min(.18, Math.max(.06, layer.duration / 4));
+    const animatedBrand = ["mascot", "brandElement", "primaryLogo", "partnerLogo"].includes(layer.role);
+    if (["eyebrow", "headline", "body"].includes(layer.role) || animatedBrand) {
+      const fade = Math.min(animatedBrand ? .28 : .18, Math.max(.06, layer.duration / 4));
       filters.push(`[${inputIndex}:v]scale=${w}:${h},format=rgba,trim=duration=${layer.duration.toFixed(4)},setpts=PTS-STARTPTS,fade=t=in:st=0:d=${fade.toFixed(3)}:alpha=1,fade=t=out:st=${Math.max(0, layer.duration - fade).toFixed(3)}:d=${fade.toFixed(3)}:alpha=1,setpts=PTS+${layer.start.toFixed(4)}/TB[${prepared}]`);
     } else {
       filters.push(`[${inputIndex}:v]scale=${w}:${h},format=rgba,trim=duration=${total.toFixed(4)},setpts=PTS-STARTPTS[${prepared}]`);
     }
-    filters.push(`[${videoLabel}][${prepared}]overlay=x=${Math.round(layer.x)}:y=${Math.round(layer.y)}:eof_action=pass:shortest=0[${next}]`);
+    const overlayX = layer.role === "mascot"
+      ? `'if(lt(t,${(layer.start + .32).toFixed(3)}),${Math.round(layer.x + 120)}-(t-${layer.start.toFixed(3)})*375,${Math.round(layer.x)})'`
+      : String(Math.round(layer.x));
+    filters.push(`[${videoLabel}][${prepared}]overlay=x=${overlayX}:y=${Math.round(layer.y)}:eof_action=pass:shortest=0[${next}]`);
     videoLabel = next;
   });
 
@@ -318,8 +351,8 @@ export async function renderFinalStudioReel(input: {
   frameId: string;
 }) {
   const timeline = input.payload.artifact?.videoTimeline;
-  if (input.payload.contentType !== "reel" || !timeline || timeline.schemaVersion !== 2) {
-    throw new Error("Esta versão não possui timeline v2 de Reel.");
+  if (input.payload.contentType !== "reel" || !timeline || timeline.schemaVersion < 2) {
+    throw new Error("Esta versão não possui timeline estruturada de Reel compatível com o renderer atual.");
   }
   if (!input.payload.artifact?.reelQuality?.passed) throw new Error("A timeline não passou pelo QA estrutural.");
   if (!input.payload.artifact.figmaVideoLayout) throw new Error("Sincronize a versão com o Figma antes do render final.");

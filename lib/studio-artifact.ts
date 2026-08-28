@@ -2,7 +2,7 @@ import type { DriveAsset, StudioFrame, StudioPayload } from "@/lib/types";
 import { buildReelEditingPlan, type FootageAnalysis, type ReelEditingPlan } from "@/lib/studio-reel-analysis";
 import { effectivePostArchetype, requiresPartnerBrand } from "@/lib/studio-post-archetype";
 
-export type StudioSemanticRole = "eyebrow" | "headline" | "body" | "stat" | "statLabel" | "bullets" | "media" | "logo" | "primaryLogo" | "partnerLogo" | "brandElement" | "pagination" | "decoration" | "background";
+export type StudioSemanticRole = "eyebrow" | "headline" | "body" | "stat" | "statLabel" | "bullets" | "media" | "logo" | "primaryLogo" | "partnerLogo" | "brandElement" | "mascot" | "pagination" | "decoration" | "background";
 
 export type StudioSceneNode = {
   id: string;
@@ -63,7 +63,8 @@ export type StudioVideoTrack = {
   sourceStartFrame?: number;
   sourceEndFrame?: number;
   crop?: StudioVideoCrop;
-  transition?: "cut" | "dissolve";
+  transition?: "cut" | "dissolve" | "whip" | "zoom" | "blur" | "push";
+  transitionDurationInFrames?: number;
   volume?: number;
   muted?: boolean;
 };
@@ -84,7 +85,7 @@ export type StudioFigmaVideoLayout = {
 };
 
 export type StudioVideoTimeline = {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   engine: "remotion";
   interchange: "opentimelineio";
   fps: number;
@@ -256,6 +257,7 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
       }),
       crop: shot.crop,
       transition: shot.transition,
+      transitionDurationInFrames: Math.max(0, Math.round((shot.transitionDurationSeconds ?? 0) * fps)),
       zIndex: 0,
       editable: true,
       assetId: shot.assetId,
@@ -270,6 +272,8 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
   );
 
   tracks.push({ id: "graphic-brand", name: "V2 · Brand graphics · Figma", kind: "graphic", role: "decoration", startFrame: 0, durationInFrames, zIndex: 10, editable: true });
+  tracks.push({ id: "graphic-brand-elements", name: "V2.1 · Brand elements · Figma", kind: "graphic", role: "brandElement", startFrame: 0, durationInFrames, zIndex: 12, editable: true });
+  tracks.push({ id: "graphic-mascot", name: "V2.2 · Mascot · Figma", kind: "graphic", role: "mascot", startFrame: 0, durationInFrames, zIndex: 14, editable: true });
 
   if (plan.reference) {
     const headlineWindow = cueWindow(plan, 0, fps, durationInFrames);
@@ -298,7 +302,7 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
   const used = [...new Set(plan.shots.map((shot) => shot.assetId))].map((id) => byId.get(id)).filter(Boolean) as DriveAsset[];
   const videoCount = used.filter((asset) => asset.mimeType.startsWith("video/")).length;
   const imageCount = used.filter((asset) => asset.mimeType.startsWith("image/")).length;
-  const audioLabel = plan.musicAssetId ? "música dedicada analisada" : "áudio natural dos takes; sem alegação de beat-match com a referência";
+  const audioLabel = plan.musicAssetId ? `música escolhida pela IA e analisada${plan.musicSelectionReason ? ` (${plan.musicSelectionReason})` : ""}` : "áudio natural dos takes; nenhuma faixa autorizada ficou disponível para seleção automática";
   const structureLabel = plan.reference
     ? `${plan.reference.shots.length} shots ${plan.reference.semanticAvailable === false ? "temporais" : "semânticos"} herdados da referência`
     : `${plan.shots.length} shots estimados dinamicamente`;
@@ -307,7 +311,7 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
   const analysisLabel = localCount ? `${localCount} mídia(s) com análise local FFmpeg; semântica remota indisponível nesses casos` : "semântica visual remota disponível para a mídia usada";
   const executionSummary = `${structureLabel} · ${videoCount} vídeo(s) · ${imageCount} foto(s) · ${(durationInFrames / fps).toFixed(2)}s · ${audioLabel} · ${coverage} · ${analysisLabel}`;
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     engine: "remotion",
     interchange: "opentimelineio",
     fps,
@@ -373,7 +377,7 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
     && Number.isFinite(track.crop.endFocalY ?? track.crop.focalY));
 
   const beatFrames = timeline.beatFrames ?? [];
-  const cutFrames = footage.slice(1).map((track) => track.startFrame);
+  const cutFrames = footage.slice(1).map((track) => track.startFrame + (track.transitionDurationInFrames ?? 0));
   const beatTolerance = Math.max(2, Math.round(.12 * timeline.fps));
   const alignedCuts = cutFrames.filter((cut) => beatFrames.some((beat) => Math.abs(beat - cut) <= beatTolerance)).length;
   const beatAlignmentRatio = cutFrames.length ? alignedCuts / cutFrames.length : 1;
@@ -434,6 +438,7 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
         : "Focais inicial/final são aceitos apenas quando a mídia usada passou por análise visual semântica real."
     },
     { id: "rhythm", label: "Ritmo respeita a referência", passed: plan.reference ? footage.length === plan.reference.shots.length : variation >= Math.min(2, footage.length), severity: "warning", detail: plan.reference ? `A duração relativa dos ${plan.reference.shots.length} shots vem do padrão real da referência.` : `${variation} durações distintas de shot na estimativa dinâmica.` },
+    { id: "dynamic-transitions", label: "Transições são escolhidas contextualmente", passed: footage.length < 5 || footage.some((track, index) => index > 0 && (track.transition ?? "cut") !== "cut"), severity: "warning", detail: footage.length < 5 ? "Montagem curta: hard cuts podem ser a escolha editorial mais forte." : `${footage.filter((track, index) => index > 0 && (track.transition ?? "cut") !== "cut").length}/${Math.max(1, footage.length - 1)} fronteiras usam transição dinâmica; as demais permanecem hard cuts deliberados.` },
     { id: "reference-typography", label: "Texto acompanha os cues reais quando detectáveis", passed: referenceTextOk, severity: "error", detail: plan.reference?.semanticAvailable === false ? "O fallback local não classifica texto; por segurança, nenhum textCue é inventado para a referência." : plan.reference ? `${plan.reference.textCues.length} cue(s) de texto detectado(s) na referência; ${textFrames} frames de texto executados.` : "Sem referência específica; usa janelas editoriais curtas padrão." },
     { id: "semantic-execution", label: "StyleSummary não substitui a timeline", passed: plan.shots.length === footage.length && Boolean(timeline.executionSummary), severity: "error", detail: `Plano validado contra execução: ${timeline.executionSummary}.` },
     {
@@ -524,14 +529,35 @@ export function attachFigmaBindings(payload: StructuredStudioPayload, frameIds: 
 }
 
 export function attachFigmaVideoLayout(payload: StructuredStudioPayload, semanticFrames: Array<Omit<StudioFigmaVideoLayout, "synced">>) {
-  const artifact = payload.artifact;
-  if (!artifact || payload.contentType !== "reel" || !semanticFrames[0]) return payload;
-  return {
-    ...payload,
-    artifact: { ...artifact, figmaVideoLayout: { ...semanticFrames[0], synced: true } }
-  } satisfies StructuredStudioPayload;
-}
+  const artifact = getStudioArtifact(payload);
+  if (!artifact || !semanticFrames.length) return payload;
+  const layout = { ...semanticFrames[0], synced: true } satisfies StudioFigmaVideoLayout;
+  const timeline = artifact.videoTimeline;
+  if (!timeline) return { ...payload, artifact: { ...artifact, figmaVideoLayout: layout } } satisfies StructuredStudioPayload;
 
+  const graphicRoles: Array<{ role: StudioSemanticRole; zIndex: number }> = [
+    { role: "decoration", zIndex: 10 },
+    { role: "brandElement", zIndex: 12 },
+    { role: "mascot", zIndex: 14 },
+    { role: "partnerLogo", zIndex: 49 },
+    { role: "primaryLogo", zIndex: 50 }
+  ];
+  const managedRoles = new Set(graphicRoles.map((item) => item.role));
+  const preserved = timeline.tracks.filter((track) => track.kind !== "graphic" || !managedRoles.has(track.role as StudioSemanticRole) || Boolean(track.assetId));
+  const semanticTracks = graphicRoles.flatMap(({ role, zIndex }) => (layout.roles[role] ?? []).map((item, index): StudioVideoTrack => ({
+    id: `figma-${role}-${index + 1}`,
+    name: `FIGMA · ${role} · ${item.name || item.id}`,
+    kind: "graphic",
+    role,
+    startFrame: 0,
+    durationInFrames: timeline.durationInFrames,
+    zIndex: zIndex + index,
+    editable: true,
+    figmaNodeId: item.id
+  })));
+  const nextTimeline: StudioVideoTimeline = { ...timeline, tracks: [...preserved, ...semanticTracks].sort((a, b) => a.zIndex - b.zIndex || a.startFrame - b.startFrame) };
+  return { ...payload, artifact: { ...artifact, figmaVideoLayout: layout, videoTimeline: nextTimeline } } satisfies StructuredStudioPayload;
+}
 export function attachRenderQa(payload: StructuredStudioPayload, renderQa: StudioBrandReport) {
   if (!payload.artifact) return payload;
   return { ...payload, artifact: { ...payload.artifact, renderQa } } satisfies StructuredStudioPayload;

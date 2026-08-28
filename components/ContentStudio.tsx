@@ -51,7 +51,7 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
 
   const compatibleAssets = useMemo(
     () => driveAssets.filter((asset) => contentType === "reel"
-      ? asset.mimeType.startsWith("video/") || asset.mimeType.startsWith("image/") || asset.mimeType.startsWith("audio/")
+      ? asset.mimeType.startsWith("video/") || asset.mimeType.startsWith("image/")
       : asset.mimeType.startsWith("image/")),
     [driveAssets, contentType]
   );
@@ -60,7 +60,6 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
   const selectedVideoCount = selectedAssets.filter((id) => driveAssets.find((asset) => asset.id === id)?.mimeType.startsWith("video/")).length;
   const selectedImageCount = selectedAssets.filter((id) => driveAssets.find((asset) => asset.id === id)?.mimeType.startsWith("image/")).length;
   const selectedVisualCount = selectedVideoCount + selectedImageCount;
-  const selectedAudio = selectedAssets.map((id) => driveAssets.find((asset) => asset.id === id)).find((asset) => asset?.mimeType.startsWith("audio/"));
   const selectedPartnerLogo = logoAssets.find((asset) => asset.id === partnerLogoAssetId);
 
   function toggleArticle(id: string) {
@@ -112,14 +111,9 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
   }
 
   function toggleAsset(id: string) {
-    const asset = driveAssets.find((item) => item.id === id);
     setSelectedAssets((current) => {
       if (current.includes(id)) return current.filter((item) => item !== id);
       if (current.length >= MAX_STUDIO_DRIVE_ASSETS) return current;
-      if (asset?.mimeType.startsWith("audio/")) {
-        const withoutOtherAudio = current.filter((item) => !driveAssets.find((candidate) => candidate.id === item)?.mimeType.startsWith("audio/"));
-        return [...withoutOtherAudio, id];
-      }
       return [...current, id];
     });
   }
@@ -219,18 +213,17 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       </section>
 
       <section className={styles.section}>
-        <div className={styles.toolbar}><div><h2>6. Mídia editorial do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} mídias de conteúdo: pelo menos um vídeo, fotos complementares e opcionalmente uma faixa de áudio. Logos selecionadas acima ficam fora deste pool.` : `O sistema só pode usar os arquivos editoriais que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => void enableDrive(event.target.checked)} /> Usar Drive</label></div>
+        <div className={styles.toolbar}><div><h2>6. Mídia editorial do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} vídeos/fotos de conteúdo. A IA escolhe automaticamente a trilha entre os áudios autorizados disponíveis no Drive, analisa BPM/beats e usa isso para montar os cortes. Logos selecionadas acima ficam fora deste pool.` : `O sistema só pode usar os arquivos editoriais que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => void enableDrive(event.target.checked)} /> Usar Drive</label></div>
         {!driveConnected ? <p><a href="/api/drive/connect">Conecte o Google Drive em Configurações</a> para habilitar a biblioteca.</p> : null}
         {loadingDrive ? <p>Carregando biblioteca de mídia…</p> : null}
         {useDrive && !loadingDrive ? <>
-          <span className={styles.count}>{selectedAssets.length}/{MAX_STUDIO_DRIVE_ASSETS} selecionados · {contentType === "reel" ? `${selectedVideoCount} vídeo(s) · ${selectedImageCount} foto(s)${selectedAudio ? ` · trilha: ${selectedAudio.name}` : " · áudio dos takes"}` : "imagens"}</span>
+          <span className={styles.count}>{selectedAssets.length}/{MAX_STUDIO_DRIVE_ASSETS} selecionados · {contentType === "reel" ? `${selectedVideoCount} vídeo(s) · ${selectedImageCount} foto(s) · trilha escolhida pela IA` : "imagens"}</span>
           <div className={styles.mediaGrid}>{compatibleAssets.filter((asset) => asset.id !== partnerLogoAssetId).map((asset) => {
             const isVideo = asset.mimeType.startsWith("video/");
-            const isAudio = asset.mimeType.startsWith("audio/");
             const isImage = asset.mimeType.startsWith("image/");
             const duration = asset.durationMillis ? `${(asset.durationMillis / 1000).toFixed(1)}s` : "";
             return <button type="button" key={asset.id} className={`${styles.media} ${selectedAssets.includes(asset.id) ? styles.mediaActive : ""}`} onClick={() => toggleAsset(asset.id)}>
-              <div className={styles.mediaThumb} style={isImage ? { backgroundImage: `url(/api/drive/preview/${encodeURIComponent(asset.id)})` } : undefined}>{isVideo ? "▶ vídeo" : isAudio ? "♪ áudio" : ""}</div>
+              <div className={styles.mediaThumb} style={isImage ? { backgroundImage: `url(/api/drive/preview/${encodeURIComponent(asset.id)})` } : undefined}>{isVideo ? "▶ vídeo" : ""}</div>
               <div className={styles.mediaBody}><strong title={asset.name}>{asset.name}</strong><span>{[asset.path?.join(" / ") || "raiz", isImage ? "foto" : duration].filter(Boolean).join(" · ")}</span></div>
             </button>;
           })}</div>

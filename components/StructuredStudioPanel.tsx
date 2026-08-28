@@ -41,6 +41,7 @@ export function StructuredStudioPanel({ projectId, driveAssets, versions, initia
   const artifact = renderedPayload.artifact!;
   const exportBase = `/api/studio/${projectId}/versions/${selected.id}/export`;
   const afterEffectsUrl = `/api/studio/${projectId}/versions/${selected.id}/after-effects`;
+  const davinciUrl = `/api/studio/${projectId}/versions/${selected.id}/davinci`;
 
   return <section className={styles.card} style={{ marginBottom: 20 }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
@@ -57,14 +58,16 @@ export function StructuredStudioPanel({ projectId, driveAssets, versions, initia
     </div>
     <div style={{ marginTop: 14, fontSize: 13, opacity: .78 }}><strong>Origem dos frames:</strong> {artifact.sceneGraph.frames.map((frame) => frame.sourceFigmaFrameId ? `base humana ${frame.sourceFigmaFrameId}` : frame.figmaTemplateNodeId ? `template descoberto ${frame.figmaTemplateNodeId}` : `resolver: ${frame.preferredTemplateNames[0]}`).join(" · ")}</div>
     {artifact.videoTimeline ? <div style={{ marginTop: 22, display: "grid", gap: 14 }}>
-      <div><h3>Timeline de vídeo editável</h3><p>Footage, áudio, texto e gráficos são tracks independentes. A revisão visual mostra a referência ao lado de um MP4 técnico único da timeline; após o Figma, o servidor codifica o MP4 final e executa o QA.</p></div>
+      <div><h3>Edição de vídeo por IA · timeline profissional</h3><p>A IA escolhe takes, ritmo, música e transições; footage, áudio, texto, logo, mascote e grafismos permanecem em tracks independentes. A plataforma renderiza o MP4 para aprovação, mas a saída editorial é a timeline estruturada exportável para um NLE profissional.</p></div>
+      {artifact.reelPlan?.musicAssetId ? <div style={{ fontSize: 13, padding: 12, border: "1px solid rgba(127,127,127,.2)", borderRadius: 12 }}><strong>Trilha escolhida pela IA:</strong> {driveAssets.find((asset) => asset.id === artifact.reelPlan?.musicAssetId)?.name ?? "áudio do projeto"}{artifact.reelPlan.musicSelectionReason ? ` · ${artifact.reelPlan.musicSelectionReason}` : ""}</div> : null}
       <StudioVideoPreview payload={selected.payload} timeline={artifact.videoTimeline} driveAssets={driveAssets} figmaLayout={artifact.figmaVideoLayout} projectId={projectId} versionId={selected.id} referenceMediaUrl={referenceMediaUrl} initialRenderQa={artifact.renderQa} initialRenderedReel={artifact.renderedReel} />
       <div className={styles.actions}>
-        {selected.figma_frame_ids.length ? <a className={styles.primary} href={afterEffectsUrl}>Baixar projeto editável · After Effects</a> : null}
-        <a className={styles.secondary} href={`${exportBase}?format=otio`}>Baixar OTIO</a>
+        {selected.figma_frame_ids.length ? <a className={styles.primary} href={davinciUrl}>Abrir/Exportar para DaVinci Resolve</a> : null}
+        {selected.figma_frame_ids.length ? <a className={styles.secondary} href={afterEffectsUrl}>Projeto editável · After Effects</a> : null}
+        <a className={styles.secondary} href={`${exportBase}?format=otio`}>OTIO bruto</a>
         <a className={styles.secondary} href={`${exportBase}?format=manifest`}>Baixar manifest</a>
       </div>
-      {!selected.figma_frame_ids.length ? <p style={{ fontSize: 13, opacity: .72 }}>O render final, as logos resolvidas e o QA visual completo aparecem depois que a versão passa pelo Figma.</p> : null}
+      {!selected.figma_frame_ids.length ? <p style={{ fontSize: 13, opacity: .72 }}>O render final e a exportação profissional ficam disponíveis após a sincronização com o Figma, quando logo, mascote/robô e demais elementos podem ser vinculados como layers reais.</p> : null}
     </div> : null}
   </section>;
 }
