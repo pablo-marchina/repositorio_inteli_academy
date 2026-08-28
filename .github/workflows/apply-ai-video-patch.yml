@@ -1,0 +1,54 @@
+name: Apply AI video patch
+
+on:
+  push:
+    branches: ["feature/ai-video-timeline-davinci"]
+    paths: [".github/workflows/apply-ai-video-patch.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/ai-video-timeline-davinci
+          fetch-depth: 0
+      - name: Decode and apply prepared patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/ai-video-patch/chunk-* | tr -d '\n\r ' | base64 --decode > /tmp/ai-video.patch
+          test -s /tmp/ai-video.patch
+          grep -q '^diff -ruN ' /tmp/ai-video.patch
+          patch -p1 --forward --batch < /tmp/ai-video.patch
+          rm -rf .github/ai-video-patch
+          rm -f .github/workflows/apply-ai-video-patch.yml
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run check:generalization
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_APP_URL: https://example.com
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
+          SUPABASE_SECRET_KEY: test-secret-key
+          APP_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          CRON_SECRET: test-cron-secret-with-at-least-24-characters
+      - name: Commit validated implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && { echo "No changes produced by patch"; exit 1; }
+          git commit -m "Implement AI-directed video editing and DaVinci export"
+          git push origin HEAD:feature/ai-video-timeline-davinci
