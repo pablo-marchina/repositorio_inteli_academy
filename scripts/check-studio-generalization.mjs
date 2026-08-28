@@ -1,6 +1,15 @@
 import { readFile } from "node:fs/promises";
 
-const criticalFiles = [
+// Every executable path that can influence generated post content or visuals.
+// Documentation/inventory files are intentionally excluded from historical-name
+// checks because they may describe past work without affecting generation.
+const generationFiles = [
+  "lib/ai.ts",
+  "lib/manual-generation.ts",
+  "lib/pipeline.ts",
+  "lib/enhanced-pipeline.ts",
+  "lib/renderer.tsx",
+  "lib/figma-visual-system.ts",
   "lib/studio-ai.ts",
   "lib/studio-artifact.ts",
   "lib/studio-post-archetype.ts",
@@ -11,16 +20,30 @@ const criticalFiles = [
   "figma-plugin/code.js"
 ];
 
-const forbiddenContentRules = [
+// These files classify arbitrary Studio posts. Unlike the older AI-weekly
+// pipeline, they must not encode a technology, metric or campaign as a category.
+const genericStudioFiles = new Set([
+  "lib/studio-ai.ts",
+  "lib/studio-artifact.ts",
+  "lib/studio-post-archetype.ts",
+  "lib/studio-reference-style.ts",
+  "lib/figma.ts",
+  "figma-plugin/code.js"
+]);
+
+const allGenerationRules = [
   {
     id: "historical-company-or-post",
     pattern: /\b(?:bcg(?:\s*x)?|tractian|fintalk|academy\s+week)\b/i,
-    message: "generation-critical code must not encode a historical company, campaign or post"
-  },
+    message: "generation code must not encode a historical company, campaign or post"
+  }
+];
+
+const genericStudioRules = [
   {
     id: "topic-specific-archetype-rule",
     pattern: /\b(?:llm|rag|nps)\b/i,
-    message: "editorial generation must not be specialized to one technology or metric"
+    message: "generic Studio classification must not be specialized to one technology or metric"
   },
   {
     id: "fixed-figma-page",
@@ -51,15 +74,22 @@ function lineFor(text, index) {
   return text.slice(0, index).split("\n").length;
 }
 
-const violations = [];
-for (const file of criticalFiles) {
-  const text = await readFile(file, "utf8");
-  for (const rule of forbiddenContentRules) {
+function addRuleViolations(violations, file, text, rules) {
+  for (const rule of rules) {
+    rule.pattern.lastIndex = 0;
     const match = rule.pattern.exec(text);
     if (match) {
       violations.push(`${file}:${lineFor(text, match.index)} [${rule.id}] ${rule.message}: ${JSON.stringify(match[0])}`);
     }
   }
+}
+
+const violations = [];
+for (const file of generationFiles) {
+  const text = await readFile(file, "utf8");
+  addRuleViolations(violations, file, text, allGenerationRules);
+  if (genericStudioFiles.has(file)) addRuleViolations(violations, file, text, genericStudioRules);
+
   for (const rule of concreteIdentifierRules) {
     rule.pattern.lastIndex = 0;
     for (const match of text.matchAll(rule.pattern)) {
@@ -69,8 +99,8 @@ for (const file of criticalFiles) {
 }
 
 if (violations.length) {
-  console.error("Studio generalization guard failed:\n" + violations.map((item) => `- ${item}`).join("\n"));
+  console.error("Post-generation generalization guard failed:\n" + violations.map((item) => `- ${item}`).join("\n"));
   process.exit(1);
 }
 
-console.log(`Studio generalization guard passed for ${criticalFiles.length} generation-critical files.`);
+console.log(`Post-generation generalization guard passed for ${generationFiles.length} executable generation files.`);
