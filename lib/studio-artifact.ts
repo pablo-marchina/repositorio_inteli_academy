@@ -1,7 +1,8 @@
 import type { DriveAsset, StudioFrame, StudioPayload } from "@/lib/types";
 import { buildReelEditingPlan, type FootageAnalysis, type ReelEditingPlan } from "@/lib/studio-reel-analysis";
+import { effectivePostArchetype, requiresPartnerBrand } from "@/lib/studio-post-archetype";
 
-export type StudioSemanticRole = "eyebrow" | "headline" | "body" | "stat" | "statLabel" | "bullets" | "media" | "logo" | "pagination" | "decoration" | "background";
+export type StudioSemanticRole = "eyebrow" | "headline" | "body" | "stat" | "statLabel" | "bullets" | "media" | "logo" | "primaryLogo" | "partnerLogo" | "brandElement" | "pagination" | "decoration" | "background";
 
 export type StudioSceneNode = {
   id: string;
@@ -20,7 +21,7 @@ export type StudioSceneFrame = {
   width: number;
   height: number;
   archetype: StudioFrame["template"];
-  sourcePageName: "Social Media";
+  sourcePageName: string;
   preferredTemplateNames: string[];
   sourceFigmaFrameId?: string;
   figmaTemplateNodeId?: string;
@@ -103,7 +104,7 @@ export type StudioArtifact = {
   sceneGraph: {
     schemaVersion: 2;
     sourceOfTruth: "structured-design";
-    designSystemPage: "Social Media";
+    designSystemPage: string;
     frames: StudioSceneFrame[];
   };
   brandAudit: StudioBrandReport;
@@ -118,7 +119,7 @@ export type StudioArtifact = {
 export type StructuredStudioPayload = StudioPayload & { artifact?: StudioArtifact };
 
 const TEMPLATE_HINTS: Record<StudioFrame["template"], string[]> = {
-  cover: ["capa", "novidades", "hackathon", "case", "tractian", "nova diretoria"],
+  cover: ["capa", "novidades", "hackathon", "case", "nova diretoria"],
   editorial: ["introdução", "analogia", "exemplo", "quando utilizar", "resumo"],
   stat: ["resumo", "diferenças", "novidades", "acompanhamento"],
   quote: ["analogia", "exemplo", "academy week"],
@@ -149,14 +150,15 @@ function changedRoles(current: StudioFrame | undefined, next: StudioFrame) {
   return roles;
 }
 
-function sceneNodes(frame: StudioFrame, source: StudioSceneNode["source"]): StudioSceneNode[] {
+function sceneNodes(frame: StudioFrame, payload: StudioPayload, source: StudioSceneNode["source"]): StudioSceneNode[] {
   const nodes: StudioSceneNode[] = [
     { id: stableNodeId(frame.position, "background"), role: "background", kind: "shape", editable: true, lockedByBrand: true, source: "figma-template" },
-    { id: stableNodeId(frame.position, "logo"), role: "logo", kind: "component", editable: true, lockedByBrand: true, source: "figma-template" },
+    { id: stableNodeId(frame.position, "primaryLogo"), role: "primaryLogo", kind: "component", editable: true, lockedByBrand: true, source: "figma-template" },
     { id: stableNodeId(frame.position, "decoration"), role: "decoration", kind: "group", editable: true, lockedByBrand: true, source: "figma-template" },
     { id: stableNodeId(frame.position, "pagination"), role: "pagination", kind: "text", editable: true, lockedByBrand: true, source: "figma-template" },
     { id: stableNodeId(frame.position, "headline"), role: "headline", kind: "text", editable: true, lockedByBrand: false, text: frame.title, source }
   ];
+  if (payload.brandContext?.partnerLogoAssetId) nodes.push({ id: stableNodeId(frame.position, "partnerLogo"), role: "partnerLogo", kind: "image", editable: true, lockedByBrand: true, assetId: payload.brandContext.partnerLogoAssetId, source: "drive" });
   if (frame.eyebrow) nodes.push({ id: stableNodeId(frame.position, "eyebrow"), role: "eyebrow", kind: "text", editable: true, lockedByBrand: false, text: frame.eyebrow, source });
   if (frame.body) nodes.push({ id: stableNodeId(frame.position, "body"), role: "body", kind: "text", editable: true, lockedByBrand: false, text: frame.body, source });
   if (frame.stat) nodes.push({ id: stableNodeId(frame.position, "stat"), role: "stat", kind: "text", editable: true, lockedByBrand: false, text: frame.stat, source });
@@ -167,11 +169,14 @@ function sceneNodes(frame: StudioFrame, source: StudioSceneNode["source"]): Stud
 }
 
 function structuralBrandAudit(payload: StudioPayload, frames: StudioSceneFrame[]): StudioBrandReport {
+  const partnerRequired = requiresPartnerBrand(payload);
+  const partnerReady = !partnerRequired || payload.brandContext?.partnerLogoStatus === "ready";
   const checks: StudioBrandReport["checks"] = [
-    { id: "figma-source", label: "Identidade nasce do Figma real", passed: frames.every((frame) => frame.sourcePageName === "Social Media"), severity: "error", detail: "Cada frame aponta para a biblioteca Social Media e deve ser clonado/associado pelo plugin antes da aprovação visual." },
+    { id: "figma-source", label: "Identidade nasce do Figma real", passed: frames.every((frame) => frame.sourcePageName.length > 0 && frame.preferredTemplateNames.length > 0), severity: "error", detail: "Cada frame aponta para o resolver do design system real. O plugin descobre páginas/templates pela estrutura do arquivo em vez de depender de um nome fixo de página." },
     { id: "structured-editability", label: "Elementos permanecem editáveis", passed: frames.every((frame) => frame.nodes.every((node) => node.editable)), severity: "error", detail: "Texto, mídia, vetores e grupos são objetos estruturados; a peça inteira não vira uma imagem opaca." },
     { id: "mobile-density", label: "Densidade adequada para mobile", passed: payload.frames.every((frame) => frame.title.length <= 100 && (frame.body?.length ?? 0) <= 360 && (frame.bullets?.length ?? 0) <= 4), severity: "warning", detail: "Limites de título, corpo e bullets preservam leitura em tela pequena." },
-    { id: "brand-locked-elements", label: "Elementos de marca protegidos", passed: frames.every((frame) => frame.nodes.some((node) => node.role === "logo" && node.lockedByBrand)), severity: "error", detail: "Logo, fundo e decoração são papéis protegidos e não podem ser redesenhados livremente pela IA." }
+    { id: "brand-locked-elements", label: "Marca principal protegida", passed: frames.every((frame) => frame.nodes.some((node) => node.role === "primaryLogo" && node.lockedByBrand)), severity: "error", detail: "primaryLogo, fundo e decoração são papéis protegidos e não podem ser redesenhados livremente pela IA." },
+    { id: "partner-brand-resolution", label: "Logo parceira é um asset explícito", passed: partnerReady, severity: partnerReady ? "info" : "error", detail: partnerReady ? (partnerRequired ? "A marca parceira possui asset explícito/autorizado; o Figma ainda valida sua aplicação real." : "Este arquétipo não exige marca parceira.") : "O conteúdo representa uma organização parceira, mas nenhuma logo oficial/autorizada foi selecionada. A IA não pode inventar, escrever ou recortar essa marca de outra mídia." }
   ];
   if (payload.contentType === "reel") {
     checks.push({ id: "render-qa-required", label: "Reel só pode ser aprovado após QA do render", passed: false, severity: "warning", detail: "O score estrutural não substitui inspeção dos frames realmente renderizados. O QA do MP4 precisa rodar depois do Figma." });
@@ -275,7 +280,10 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
     }
   }
 
-  tracks.push({ id: "graphic-logo", name: "V6 · Academy logo · Figma", kind: "graphic", role: "logo", startFrame: 0, durationInFrames, zIndex: 50, editable: true });
+  tracks.push({ id: "graphic-logo", name: "V6 · Academy logo · Figma", kind: "graphic", role: "primaryLogo", startFrame: 0, durationInFrames, zIndex: 50, editable: true });
+  if (payload.brandContext?.partnerLogoAssetId) {
+    tracks.push({ id: "graphic-partner-logo", name: `V7 · Partner logo · ${payload.brandContext.partnerName ?? "Figma"}`, kind: "graphic", role: "partnerLogo", startFrame: 0, durationInFrames, zIndex: 49, editable: true, assetId: payload.brandContext.partnerLogoAssetId });
+  }
   if (plan.musicAssetId) {
     tracks.push({ id: "audio-music", name: `A1 · Música · ${byId.get(plan.musicAssetId)?.name ?? plan.musicAssetId}`, kind: "audio", role: "music", startFrame: 0, durationInFrames, sourceStartFrame: 0, zIndex: -10, editable: true, assetId: plan.musicAssetId, volume: .6 });
   }
@@ -449,6 +457,7 @@ export function compileStudioArtifact(payload: StudioPayload, options: {
   reelPlan?: ReelEditingPlan;
 } = {}): StructuredStudioPayload {
   const vertical = payload.contentType === "story" || payload.contentType === "reel";
+  const postArchetype = effectivePostArchetype(payload);
   const frames = payload.frames.map((frame, index): StudioSceneFrame => {
     const current = options.previousPayload?.frames.find((candidate) => candidate.position === frame.position);
     const sourceFigmaFrameId = options.baseFigmaFrameIds?.[index];
@@ -458,11 +467,11 @@ export function compileStudioArtifact(payload: StudioPayload, options: {
       width: 1080,
       height: vertical ? 1920 : 1350,
       archetype: frame.template,
-      sourcePageName: "Social Media",
-      preferredTemplateNames: vertical ? ["instagram story", ...TEMPLATE_HINTS[frame.template]] : TEMPLATE_HINTS[frame.template],
+      sourcePageName: "auto-discovered",
+      preferredTemplateNames: [...new Set([postArchetype, ...(vertical ? ["instagram story"] : []), ...TEMPLATE_HINTS[frame.template]])],
       sourceFigmaFrameId,
       changedRoles: changedRoles(current, frame),
-      nodes: sceneNodes(frame, sourceFigmaFrameId ? "figma-base-version" : "generated-content")
+      nodes: sceneNodes(frame, payload, sourceFigmaFrameId ? "figma-base-version" : "generated-content")
     };
   });
   const driveAssets = options.driveAssets ?? [];
@@ -472,7 +481,7 @@ export function compileStudioArtifact(payload: StudioPayload, options: {
     schemaVersion: 2,
     editability: "structured",
     renderer: "figma-template-clone",
-    sceneGraph: { schemaVersion: 2, sourceOfTruth: "structured-design", designSystemPage: "Social Media", frames },
+    sceneGraph: { schemaVersion: 2, sourceOfTruth: "structured-design", designSystemPage: "auto-discovered", frames },
     brandAudit: structuralBrandAudit(payload, frames),
     visualBrandReview: options.visualBrandReview,
     reelPlan: plan,
