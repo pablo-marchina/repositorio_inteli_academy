@@ -1,7 +1,6 @@
-const GUARD_KEY = Symbol.for("inteli-academy.gemini-media-fetch-guard");
 const MEDIA_ANALYSIS_TIMEOUT_MS = 20_000;
 
-type GuardedGlobal = typeof globalThis & { [GUARD_KEY]?: true };
+type GuardedGlobal = typeof globalThis & { __academyGeminiMediaFetchGuardInstalled?: boolean };
 type GeminiPayload = {
   candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
 };
@@ -72,7 +71,7 @@ function normalizedCandidatePayload(payload: GeminiPayload) {
  */
 export function installGeminiMediaFetchGuard() {
   const target = globalThis as GuardedGlobal;
-  if (target[GUARD_KEY]) return;
+  if (target.__academyGeminiMediaFetchGuardInstalled) return;
 
   const originalFetch = globalThis.fetch.bind(globalThis);
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -122,5 +121,5 @@ export function installGeminiMediaFetchGuard() {
     return nonRetryableMediaFailure("visual media candidate was structurally invalid");
   }) as typeof fetch;
 
-  target[GUARD_KEY] = true;
+  target.__academyGeminiMediaFetchGuardInstalled = true;
 }
