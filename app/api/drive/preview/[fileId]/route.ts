@@ -29,46 +29,49 @@ function runFfmpeg(args: string[]) {
   });
 }
 
-async function browserSafeVideo(bytes: Uint8Array) {
+function boundedNumber(value: string | null, fallback: number, min: number, max: number) {
+  const parsed = value === null ? NaN : Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+async function browserSafeVideo(bytes: Uint8Array, startSeconds: number, durationSeconds: number) {
   const dir = await mkdtemp(join(tmpdir(), "academy-browser-preview-"));
   const input = join(dir, "input-video");
   const output = join(dir, "preview.mp4");
+  const startedAt = Date.now();
   try {
     await writeFile(input, bytes);
-    const common = [
+    await runFfmpeg([
       "-y",
+      "-hide_banner",
+      "-loglevel", "error",
+      "-ss", startSeconds.toFixed(3),
       "-i", input,
+      "-t", durationSeconds.toFixed(3),
       "-map", "0:v:0",
-      "-vf", "scale=540:-2:flags=lanczos,fps=24",
+      "-vf", "scale=360:-2:flags=fast_bilinear,fps=15",
       "-c:v", "libx264",
       "-preset", "ultrafast",
-      "-crf", "27",
-      "-maxrate", "1400k",
-      "-bufsize", "2800k",
+      "-crf", "31",
       "-pix_fmt", "yuv420p",
-      "-movflags", "+faststart"
-    ];
+      "-g", "15",
+      "-keyint_min", "15",
+      "-sc_threshold", "0",
+      "-an",
+      "-movflags", "+faststart",
+      output
+    ]);
 
-    try {
-      await runFfmpeg([
-        ...common.slice(0, 5),
-        "-map", "0:a:0?",
-        ...common.slice(5),
-        "-c:a", "aac",
-        "-b:a", "96k",
-        "-ac", "2",
-        output
-      ]);
-    } catch (audioError) {
-      console.warn("[drive-preview] browser proxy audio failed; retrying video-only", { error: String(audioError) });
-      await runFfmpeg([
-        ...common,
-        "-an",
-        output
-      ]);
-    }
-
-    return new Uint8Array(await readFile(output));
+    const proxy = new Uint8Array(await readFile(output));
+    console.info("[drive-preview] generated shot proxy", {
+      inputBytes: bytes.byteLength,
+      outputBytes: proxy.byteLength,
+      startSeconds,
+      durationSeconds,
+      elapsedMs: Date.now() - startedAt
+    });
+    return proxy;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -79,17 +82,25 @@ export async function GET(request: Request, context: { params: Promise<{ fileId:
   try {
     const { fileId } = await context.params;
     const { asset, bytes } = await downloadDriveAsset(fileId);
-    const browserSafe = new URL(request.url).searchParams.get("browser") === "1";
+    const search = new URL(request.url).searchParams;
+    const browserSafe = search.get("browser") === "1";
 
     if (browserSafe && asset.mimeType.startsWith("video/")) {
-      const proxy = await browserSafeVideo(bytes);
+      const startSeconds = boundedNumber(search.get("start"), 0, 0, 600);
+      // Browser previews are inspection proxies, not export media. Keep them short so
+      // 4K/60 HEVC iPhone takes never require transcoding the entire source on Vercel.
+      const requestedDuration = boundedNumber(search.get("duration"), 12, 0.1, 30);
+      const durationSeconds = Math.min(30, requestedDuration + 0.2);
+      const proxy = await browserSafeVideo(bytes, startSeconds, durationSeconds);
       return new Response(proxy, {
         headers: {
           "content-type": "video/mp4",
           "content-length": String(proxy.byteLength),
           "content-disposition": "inline",
-          "cache-control": "private, max-age=3600",
-          "x-academy-preview-proxy": "h264-aac"
+          "cache-control": "private, max-age=86400, immutable",
+          "x-academy-preview-proxy": "shot-h264",
+          "x-academy-preview-start": startSeconds.toFixed(3),
+          "x-academy-preview-duration": durationSeconds.toFixed(3)
         }
       });
     }
