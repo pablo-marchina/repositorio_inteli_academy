@@ -8,6 +8,7 @@ import type { StudioRenderedReel } from "@/lib/studio-render-types";
 
 type TechnicalPreview = {
   publicUrl: string;
+  playbackUrl: string;
   storagePath: string;
   byteSize: number;
   durationSeconds: number;
@@ -47,6 +48,7 @@ export function StudioVideoPreview({ payload, timeline, driveAssets, figmaLayout
   const [preview, setPreview] = useState<TechnicalPreview | null>(null);
   const [previewState, setPreviewState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [previewError, setPreviewError] = useState("");
+  const [previewPlaybackError, setPreviewPlaybackError] = useState("");
   const [matchState, setMatchState] = useState<"idle" | "matching" | "done" | "error">("idle");
   const [matchMessage, setMatchMessage] = useState("");
 
@@ -54,10 +56,12 @@ export function StudioVideoPreview({ payload, timeline, driveAssets, figmaLayout
     if (!projectId || !versionId) return;
     setPreviewState("loading");
     setPreviewError("");
+    setPreviewPlaybackError("");
     try {
       const response = await fetch(`/api/studio/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}/technical-preview`, { method: "POST" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Falha ao gerar preview técnico.");
+      if (!body.preview?.playbackUrl) throw new Error("O servidor gerou o MP4, mas não retornou uma URL de reprodução interna.");
       setPreview(body.preview as TechnicalPreview);
       setPreviewState("done");
     } catch (reason) {
@@ -142,13 +146,26 @@ export function StudioVideoPreview({ payload, timeline, driveAssets, figmaLayout
         </div>
         <div style={{ display: "grid", gap: 6 }}>
           <span style={{ fontSize: 12, fontWeight: 700 }}>Montagem gerada · preview MP4 único</span>
-          {preview ? <video key={preview.fingerprint} src={preview.publicUrl} controls playsInline preload="metadata" style={{ width: "100%", borderRadius: 18, background: "#0a0a0a", aspectRatio: `${timeline.width}/${timeline.height}`, objectFit: "cover" }} /> : <div style={{ minHeight: 240, borderRadius: 18, background: "#0a0a0a", display: "grid", placeItems: "center", padding: 18, textAlign: "center", fontSize: 13 }}>{previewState === "loading" || matchState === "matching" ? "Preparando um único MP4 browser-safe com todos os shots…" : previewState === "error" ? previewError : "Preparando preview…"}</div>}
+          {preview ? <>
+            <video
+              key={preview.fingerprint}
+              src={preview.playbackUrl}
+              controls
+              playsInline
+              preload="metadata"
+              onCanPlay={() => setPreviewPlaybackError("")}
+              onError={() => setPreviewPlaybackError("O navegador recebeu o MP4, mas não conseguiu reproduzi-lo. Use “Abrir MP4 técnico” abaixo para inspecionar a resposta diretamente.")}
+              style={{ width: "100%", borderRadius: 18, background: "#0a0a0a", aspectRatio: `${timeline.width}/${timeline.height}`, objectFit: "cover" }}
+            />
+            <a href={preview.playbackUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>Abrir MP4 técnico</a>
+          </> : <div style={{ minHeight: 240, borderRadius: 18, background: "#0a0a0a", display: "grid", placeItems: "center", padding: 18, textAlign: "center", fontSize: 13 }}>{previewState === "loading" || matchState === "matching" ? "Preparando um único MP4 browser-safe com todos os shots…" : previewState === "error" ? previewError : "Preparando preview…"}</div>}
           {preview ? <span style={{ fontSize: 12, opacity: .62 }}>{(preview.byteSize / 1024 / 1024).toFixed(1)} MB · {preview.durationSeconds.toFixed(1)}s · {preview.cacheHit ? "cache" : "gerado agora"}</span> : null}
+          {previewPlaybackError ? <div style={{ fontSize: 12, padding: "8px 10px", border: "1px solid rgba(220,80,80,.45)", borderRadius: 8 }}>{previewPlaybackError}</div> : null}
           {previewState === "error" ? <button type="button" onClick={() => void loadTechnicalPreview()}>Tentar preview novamente</button> : null}
         </div>
       </div>
       <span style={{ fontSize: 12, opacity: .68 }}>{matchMessage}</span>
-      <span style={{ fontSize: 12, opacity: .62 }}>O preview técnico agora é um único MP4 H.264, em vez de vários vídeos dinâmicos dentro do Remotion Player. Ele preserva ordem, cortes, duração e crop da timeline; o render/export continua usando os originais.</span>
+      <span style={{ fontSize: 12, opacity: .62 }}>O preview técnico é servido pela própria aplicação com suporte a byte ranges. Ele preserva ordem, cortes, duração e crop da timeline; render/export continuam usando os originais.</span>
     </div>
 
     {!figmaLayout ? <div style={{ fontSize: 13, padding: "10px 12px", border: "1px solid rgba(240,180,60,.35)", borderRadius: 10 }}><strong>Preview pré-Figma.</strong> Montagem, crop e timing são reais. Elementos gráficos finais da marca só entram após sincronizar o frame no Figma.</div> : null}
