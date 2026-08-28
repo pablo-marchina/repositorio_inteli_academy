@@ -100,7 +100,8 @@ export function AcademyVideoComposition({ payload, timeline, assetUrls, figmaLay
     {figmaLayout && (brandLayerUrls.background ?? []).length ? <FigmaRole role="background" urls={brandLayerUrls.background ?? []} layout={figmaLayout} /> : null}
 
     {footage.map((track) => {
-      const src = track.assetId ? assetUrls[track.assetId] : undefined;
+      const trackSpecificSrc = assetUrls[track.id];
+      const src = trackSpecificSrc ?? (track.assetId ? assetUrls[track.assetId] : undefined);
       if (!src) return null;
       const crop = track.crop ?? { focalX: .5, focalY: .5, endFocalX: .5, endFocalY: .5, zoom: 1 };
       const local = frame - track.startFrame;
@@ -123,7 +124,7 @@ export function AcademyVideoComposition({ payload, timeline, assetUrls, figmaLay
       return <Sequence key={track.id} from={track.startFrame} durationInFrames={track.durationInFrames}>
         {track.kind === "image"
           ? <Img src={src} style={mediaStyle} />
-          : <Video src={src} startFrom={track.sourceStartFrame ?? 0} muted={music ? true : Boolean(track.muted)} volume={music ? 0 : track.volume ?? .72} style={mediaStyle} />}
+          : <Video src={src} startFrom={trackSpecificSrc ? 0 : (track.sourceStartFrame ?? 0)} muted={music ? true : Boolean(track.muted)} volume={music ? 0 : track.volume ?? .72} style={mediaStyle} />}
       </Sequence>;
     })}
 
