@@ -1,40 +1,99 @@
 import React from "react";
-import { AbsoluteFill, Sequence, spring, interpolate, useCurrentFrame, useVideoConfig, Video } from "remotion";
+import { AbsoluteFill, Audio, Img, Sequence, Video, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import type { StudioPayload } from "@/lib/types";
-import type { StudioVideoTimeline } from "@/lib/studio-artifact";
+import type { StudioFigmaVideoLayout, StudioVideoTimeline, StudioVideoTrack } from "@/lib/studio-artifact";
 
 export type AcademyVideoCompositionProps = {
   payload: StudioPayload;
   timeline: StudioVideoTimeline;
-  videoUrl?: string;
+  assetUrls: Record<string, string>;
+  figmaLayout?: StudioFigmaVideoLayout;
+  brandLayerUrls?: Record<string, string[]>;
 };
 
-function entrance(frame: number, fps: number, delay: number) {
-  const progress = spring({ frame: Math.max(0, frame - delay), fps, config: { damping: 18, stiffness: 130 } });
-  return {
-    opacity: interpolate(progress, [0, 1], [0, 1]),
-    transform: `translateY(${interpolate(progress, [0, 1], [40, 0])}px)`
-  };
+function clamp(value: number, min: number, max: number) { return Math.min(max, Math.max(min, value)); }
+function layoutItems(layout: StudioFigmaVideoLayout | undefined, role: string) { return layout?.roles?.[role] ?? []; }
+
+function entrance(frame: number, fps: number, duration: number) {
+  const enter = spring({ frame: Math.max(0, frame), fps, config: { damping: 18, stiffness: 160 } });
+  const exitStart = Math.max(0, duration - Math.round(.18 * fps));
+  const exit = interpolate(frame, [exitStart, duration], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return { opacity: interpolate(enter, [0, 1], [0, 1]) * exit, transform: `translateY(${interpolate(enter, [0, 1], [24, 0])}px)` };
 }
 
-export function AcademyVideoComposition({ payload, timeline, videoUrl }: AcademyVideoCompositionProps) {
+function FigmaRole({ role, urls, layout, animate = false, duration = 1 }: { role: string; urls: string[]; layout?: StudioFigmaVideoLayout; animate?: boolean; duration?: number }) {
+  const { width, height, fps } = useVideoConfig();
+  const frame = useCurrentFrame();
+  const items = layoutItems(layout, role);
+  const animation = animate ? entrance(frame, fps, duration) : {};
+  return <div style={{ position: "absolute", inset: 0, pointerEvents: "none", ...animation }}>
+    {urls.map((url, index) => {
+      const item = items[index];
+      if (!item?.box || !layout?.frameBox?.width || !layout.frameBox.height) return null;
+      return <Img key={`${role}-${index}`} src={url} style={{ position: "absolute", left: item.box.x / layout.frameBox.width * width, top: item.box.y / layout.frameBox.height * height, width: item.box.width / layout.frameBox.width * width, height: item.box.height / layout.frameBox.height * height, objectFit: "contain" }} />;
+    })}
+  </div>;
+}
+
+function FallbackText({ track, text, layout, role }: { track: StudioVideoTrack; text: string; layout?: StudioFigmaVideoLayout; role: string }) {
+  const frame = useCurrentFrame();
+  const { fps, width, height } = useVideoConfig();
+  const item = layoutItems(layout, role)[0];
+  const box = item?.box && layout?.frameBox?.width && layout.frameBox.height
+    ? { left: item.box.x / layout.frameBox.width * width, top: item.box.y / layout.frameBox.height * height, width: item.box.width / layout.frameBox.width * width, height: item.box.height / layout.frameBox.height * height }
+    : role === "headline"
+      ? { left: width * .08, top: height * .58, width: width * .84, height: height * .24 }
+      : role === "eyebrow"
+        ? { left: width * .08, top: height * .52, width: width * .84, height: height * .08 }
+        : { left: width * .08, top: height * .72, width: width * .84, height: height * .14 };
+  const style = item?.style;
+  const fontSize = style?.fontSize ? style.fontSize / (layout?.frameBox?.width || width) * width : role === "headline" ? 82 : role === "eyebrow" ? 28 : 34;
+  return <div style={{ position: "absolute", ...box, color: "white", fontFamily: style?.fontFamily ? `${style.fontFamily}, sans-serif` : "Figtree, Inter, sans-serif", fontSize, fontWeight: style?.fontWeight ?? (role === "headline" ? 800 : 600), lineHeight: style?.lineHeightPx && style.fontSize ? style.lineHeightPx / style.fontSize : 1.08, textAlign: style?.textAlignHorizontal === "CENTER" ? "center" : style?.textAlignHorizontal === "RIGHT" ? "right" : "left", overflow: "hidden", ...entrance(frame, fps, track.durationInFrames) }}>{text}</div>;
+}
+
+export function AcademyVideoComposition({ payload, timeline, assetUrls, figmaLayout, brandLayerUrls = {} }: AcademyVideoCompositionProps) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const data = payload.frames[0];
-  const footage = timeline.tracks.find((track) => track.role === "footage");
-  const headline = timeline.tracks.find((track) => track.role === "headline");
-  const body = timeline.tracks.find((track) => track.role === "body");
-  const eyebrow = timeline.tracks.find((track) => track.role === "eyebrow");
+  const footage = timeline.tracks.filter((track) => track.role === "footage" && track.assetId);
+  const music = timeline.tracks.find((track) => track.role === "music" && track.assetId);
+  const textTracks = timeline.tracks.filter((track) => track.kind === "text");
 
-  return <AbsoluteFill style={{ backgroundColor: "#141414", color: "white", fontFamily: "Figtree, Inter, sans-serif", overflow: "hidden" }}>
-    {videoUrl && footage ? <Sequence from={footage.startFrame} durationInFrames={footage.durationInFrames}><Video src={videoUrl} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} /></Sequence> : null}
-    <AbsoluteFill style={{ background: "linear-gradient(180deg, rgba(20,20,20,.04), rgba(20,20,20,.55))" }} />
-    <div style={{ position: "absolute", left: 72, top: 62, fontSize: 48, fontWeight: 800, color: "white" }}>IA</div>
-    <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 18, background: "#2a00ff" }} />
-    <div style={{ position: "absolute", left: 84, right: 84, bottom: 190 }}>
-      {data.eyebrow && eyebrow ? <Sequence from={eyebrow.startFrame}><div style={{ ...entrance(frame, fps, eyebrow.startFrame), fontSize: 28, fontWeight: 750, letterSpacing: 3, color: "#d0c7ff", marginBottom: 26 }}>{data.eyebrow.toUpperCase()}</div></Sequence> : null}
-      {headline ? <Sequence from={headline.startFrame}><div style={{ ...entrance(frame, fps, headline.startFrame), fontSize: data.title.length > 60 ? 72 : 94, lineHeight: .96, letterSpacing: -4, fontWeight: 850 }}>{data.title}</div></Sequence> : null}
-      {data.body && body ? <Sequence from={body.startFrame}><div style={{ ...entrance(frame, fps, body.startFrame), fontSize: 34, lineHeight: 1.3, fontWeight: 520, marginTop: 28, maxWidth: 860 }}>{data.body}</div></Sequence> : null}
-    </div>
+  return <AbsoluteFill style={{ backgroundColor: "#0a0a0a", color: "white", overflow: "hidden" }}>
+    {figmaLayout && (brandLayerUrls.background ?? []).length ? <FigmaRole role="background" urls={brandLayerUrls.background ?? []} layout={figmaLayout} /> : null}
+
+    {footage.map((track) => {
+      const src = track.assetId ? assetUrls[track.assetId] : undefined;
+      if (!src) return null;
+      const crop = track.crop ?? { focalX: .5, focalY: .5, endFocalX: .5, endFocalY: .5, zoom: 1 };
+      const local = frame - track.startFrame;
+      const lastLocalFrame = Math.max(1, track.durationInFrames - 1);
+      const focalX = interpolate(local, [0, lastLocalFrame], [crop.focalX, crop.endFocalX ?? crop.focalX], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+      const focalY = interpolate(local, [0, lastLocalFrame], [crop.focalY, crop.endFocalY ?? crop.focalY], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+      const fadeFrames = track.transition === "dissolve" ? Math.max(1, Math.round(.12 * fps)) : 1;
+      const opacity = track.transition === "dissolve"
+        ? interpolate(local, [0, fadeFrames, Math.max(fadeFrames, track.durationInFrames - fadeFrames), track.durationInFrames], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
+        : 1;
+      return <Sequence key={track.id} from={track.startFrame} durationInFrames={track.durationInFrames}>
+        <Video src={src} startFrom={track.sourceStartFrame ?? 0} muted={music ? true : Boolean(track.muted)} volume={music ? 0 : track.volume ?? .72} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: `${clamp(focalX, 0, 1) * 100}% ${clamp(focalY, 0, 1) * 100}%`, transform: `scale(${crop.zoom || 1})`, opacity }} />
+      </Sequence>;
+    })}
+
+    {music?.assetId && assetUrls[music.assetId] ? <Sequence from={music.startFrame} durationInFrames={music.durationInFrames}><Audio src={assetUrls[music.assetId]} startFrom={music.sourceStartFrame ?? 0} volume={music.volume ?? .6} /></Sequence> : null}
+
+    {figmaLayout ? <>
+      <FigmaRole role="decoration" urls={brandLayerUrls.decoration ?? []} layout={figmaLayout} />
+      <FigmaRole role="logo" urls={brandLayerUrls.logo ?? []} layout={figmaLayout} />
+    </> : null}
+
+    {textTracks.map((track) => {
+      const role = String(track.role);
+      const text = track.role === "headline" ? data.title : track.role === "eyebrow" ? data.eyebrow : track.role === "body" ? data.body : track.text;
+      if (!text) return null;
+      const exactUrls = brandLayerUrls[role] ?? [];
+      return <Sequence key={track.id} from={track.startFrame} durationInFrames={track.durationInFrames}>
+        {figmaLayout && exactUrls.length ? <FigmaRole role={role} urls={exactUrls} layout={figmaLayout} animate duration={track.durationInFrames} /> : <FallbackText track={{ ...track, startFrame: 0 }} text={text} layout={figmaLayout} role={role} />}
+      </Sequence>;
+    })}
   </AbsoluteFill>;
 }
