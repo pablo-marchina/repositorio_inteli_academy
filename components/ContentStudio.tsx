@@ -120,7 +120,7 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
     setError("");
     if (useDrive && !selectedAssets.length) return setError("O uso do Drive está habilitado; escolha pelo menos uma mídia.");
     if (contentType === "reel" && !selectedVisualCount) return setError("Reel requer pelo menos um vídeo ou uma imagem selecionada do Drive.");
-    if (contentType === "reel" && !selectedVideoCount && !selectedAudio) return setError("Um Reel composto somente por imagens precisa de uma faixa de áudio selecionada.");
+    if (contentType === "reel" && !selectedVideoCount) return setError("Reel requer pelo menos um vídeo; as fotos selecionadas entram como shots complementares da montagem.");
     setGenerating(true);
     try {
       const response = await fetch("/api/studio/generate", {
@@ -187,7 +187,7 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       </section>
 
       <section className={styles.section}>
-        <div className={styles.toolbar}><div><h2>5. Mídia do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} vídeos, fotos e uma faixa de áudio opcional. Todos os visuais selecionados entram no pool; a referência determina a quantidade e a cadência dos shots.` : `O sistema só pode usar os arquivos que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => enableDrive(event.target.checked)} /> Usar Drive</label></div>
+        <div className={styles.toolbar}><div><h2>5. Mídia do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} mídias: mantenha pelo menos um vídeo e adicione quantas fotos fizerem sentido para ampliar o pool de montagem; você também pode escolher uma faixa de áudio. A referência determina a quantidade e a cadência dos shots.` : `O sistema só pode usar os arquivos que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => enableDrive(event.target.checked)} /> Usar Drive</label></div>
         {!driveConnected ? <p><a href="/api/drive/connect">Conecte o Google Drive em Configurações</a> para habilitar a biblioteca.</p> : null}
         {loadingDrive ? <p>Carregando biblioteca de mídia…</p> : null}
         {useDrive && !loadingDrive ? <>
