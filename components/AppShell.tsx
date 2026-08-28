@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { ApiFetchGuard } from "@/components/ApiFetchGuard";
 import { SignOutButton } from "@/components/SignOutButton";
 
 export function AppShell({ email, children }: { email: string; children: React.ReactNode }) {
   return (
     <div className="app-shell">
+      <ApiFetchGuard />
       <aside className="sidebar">
         <Link href="/dashboard" className="logo-lockup">
           <span className="logo-mark inverse">IA</span>

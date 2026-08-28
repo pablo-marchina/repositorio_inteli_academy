@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 // Documentation/inventory files are intentionally excluded from historical-name
 // checks because they may describe past work without affecting generation.
 const generationFiles = [
+  "app/api/studio/generate/route.ts",
   "lib/ai.ts",
   "lib/manual-generation.ts",
   "lib/pipeline.ts",
@@ -13,6 +14,7 @@ const generationFiles = [
   "lib/brand.ts",
   "lib/renderer.tsx",
   "lib/figma-visual-system.ts",
+  "lib/gemini-media-fetch-guard.ts",
   "lib/studio-ai.ts",
   "lib/studio-artifact.ts",
   "lib/studio-post-archetype.ts",
@@ -26,6 +28,8 @@ const generationFiles = [
 // These files classify arbitrary Studio posts. Unlike the older AI-weekly
 // pipeline, they must not encode a technology, metric or campaign as a category.
 const genericStudioFiles = new Set([
+  "app/api/studio/generate/route.ts",
+  "lib/gemini-media-fetch-guard.ts",
   "lib/studio-ai.ts",
   "lib/studio-artifact.ts",
   "lib/studio-post-archetype.ts",
