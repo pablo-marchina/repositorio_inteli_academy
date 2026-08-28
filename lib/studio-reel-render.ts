@@ -102,11 +102,20 @@ async function downloadFigmaLayers(payload: StructuredStudioPayload, frameId: st
 function videoFilter(track: StudioVideoTrack, inputIndex: number, fps: number, output: string) {
   const start = (track.sourceStartFrame ?? 0) / fps;
   const end = (track.sourceEndFrame ?? ((track.sourceStartFrame ?? 0) + track.durationInFrames)) / fps;
-  const crop = track.crop ?? { focalX: .5, focalY: .5, zoom: 1 };
+  const duration = Math.max(.001, track.durationInFrames / fps);
+  const crop = track.crop ?? { focalX: .5, focalY: .5, endFocalX: .5, endFocalY: .5, zoom: 1 };
+  const startX = Math.min(1, Math.max(0, crop.focalX));
+  const startY = Math.min(1, Math.max(0, crop.focalY));
+  const endX = Math.min(1, Math.max(0, crop.endFocalX ?? crop.focalX));
+  const endY = Math.min(1, Math.max(0, crop.endFocalY ?? crop.focalY));
+  const dx = endX - startX;
+  const dy = endY - startY;
   const zoom = Math.max(1, crop.zoom || 1);
   const scaleWidth = `if(gt(a,0.5625),trunc(1920*a*${zoom.toFixed(4)}/2)*2,trunc(1080*${zoom.toFixed(4)}/2)*2)`;
   const scaleHeight = `if(gt(a,0.5625),trunc(1920*${zoom.toFixed(4)}/2)*2,trunc(1080/a*${zoom.toFixed(4)}/2)*2)`;
-  return `[${inputIndex}:v]trim=start=${start.toFixed(4)}:end=${end.toFixed(4)},setpts=PTS-STARTPTS,scale='${scaleWidth}':'${scaleHeight}',crop=${WIDTH}:${HEIGHT}:'(iw-${WIDTH})*${crop.focalX.toFixed(4)}':'(ih-${HEIGHT})*${crop.focalY.toFixed(4)}',fps=${fps},setsar=1,format=yuv420p[${output}]`;
+  const x = `(iw-${WIDTH})*(${startX.toFixed(5)}+${dx.toFixed(5)}*t/${duration.toFixed(5)})`;
+  const y = `(ih-${HEIGHT})*(${startY.toFixed(5)}+${dy.toFixed(5)}*t/${duration.toFixed(5)})`;
+  return `[${inputIndex}:v]trim=start=${start.toFixed(4)}:end=${end.toFixed(4)},setpts=PTS-STARTPTS,scale='${scaleWidth}':'${scaleHeight}',crop=${WIDTH}:${HEIGHT}:'${x}':'${y}',fps=${fps},setsar=1,format=yuv420p[${output}]`;
 }
 
 async function renderWithFfmpeg(input: { payload: StructuredStudioPayload; driveAssets: DriveAsset[]; frameId: string; dir: string; output: string }) {
