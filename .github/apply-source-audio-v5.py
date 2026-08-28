@@ -153,8 +153,8 @@ replace_exact(
 
 replace_exact(
     "lib/studio-editor-export.ts",
-    '''      metadata: { academy: { id: track.id, role: track.role, editable: true, text: track.text ?? null, zIndex: track.zIndex, figmaNodeId: track.figmaNodeId ?? null } },''',
-    '''      metadata: { academy: { id: track.id, role: track.role, editable: true, text: track.text ?? null, zIndex: track.zIndex, figmaNodeId: track.figmaNodeId ?? null, volume: track.volume ?? null, muted: track.muted ?? false, sourceAudioAnalysis: track.sourceAudioAnalysis ?? null } },'''
+    '''          volume: track.volume ?? null,\n          muted: track.muted ?? null,\n          musicDirection: track.musicDirection ?? null''',
+    '''          volume: track.volume ?? null,\n          muted: track.muted ?? null,\n          sourceAudioAnalysis: track.sourceAudioAnalysis ?? null,\n          musicDirection: track.musicDirection ?? null'''
 )
 
 print("Audiovisual v5 patch applied")
