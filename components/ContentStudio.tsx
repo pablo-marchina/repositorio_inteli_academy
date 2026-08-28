@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import styles from "@/components/ContentStudio.module.css";
+import { MAX_STUDIO_ARTICLES, MAX_STUDIO_DRIVE_ASSETS, MAX_STUDIO_REFERENCES } from "@/lib/studio-limits";
 import type { DriveAsset, StudioContentType } from "@/lib/types";
 
 type Article = { id: string; title: string; summary: string; source_name: string; published_at: string };
@@ -55,11 +56,11 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
   const selectedAudio = selectedAssets.map((id) => driveAssets.find((asset) => asset.id === id)).find((asset) => asset?.mimeType.startsWith("audio/"));
 
   function toggleArticle(id: string) {
-    setSelectedArticles((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < 12 ? [...current, id] : current);
+    setSelectedArticles((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < MAX_STUDIO_ARTICLES ? [...current, id] : current);
   }
 
   function toggleReference(id: string) {
-    setSelectedReferences((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < 8 ? [...current, id] : current);
+    setSelectedReferences((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < MAX_STUDIO_REFERENCES ? [...current, id] : current);
   }
 
   async function syncReferences() {
@@ -102,7 +103,7 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
     const asset = driveAssets.find((item) => item.id === id);
     setSelectedAssets((current) => {
       if (current.includes(id)) return current.filter((item) => item !== id);
-      if (current.length >= 12) return current;
+      if (current.length >= MAX_STUDIO_DRIVE_ASSETS) return current;
       if (asset?.mimeType.startsWith("audio/")) {
         const withoutOtherAudio = current.filter((item) => !driveAssets.find((candidate) => candidate.id === item)?.mimeType.startsWith("audio/"));
         return [...withoutOtherAudio, id];
@@ -145,7 +146,7 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       </section>
 
       <section className={styles.section}>
-        <div className={styles.toolbar}><div><h2>2. Artigos <small>(opcional)</small></h2><p>Selecione artigos quando quiser fundamentar fatos, números ou uma pauta específica. Sem artigos, a geração usa o contexto informado e evita criar alegações factuais externas sem fonte.</p></div><span className={styles.count}>{selectedArticles.length}/12 selecionados</span></div>
+        <div className={styles.toolbar}><div><h2>2. Artigos <small>(opcional)</small></h2><p>Selecione artigos quando quiser fundamentar fatos, números ou uma pauta específica. Sem artigos, a geração usa o contexto informado e evita criar alegações factuais externas sem fonte.</p></div><span className={styles.count}>{selectedArticles.length}/{MAX_STUDIO_ARTICLES} selecionados</span></div>
         <input className={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar artigos por título, resumo ou fonte" />
         <div className={styles.articleList}>{filteredArticles.map((article) => (
           <label className={styles.article} key={article.id}>
@@ -165,7 +166,7 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       <section className={styles.section}>
         <div className={styles.toolbar}>
           <div><h2>4. Posts reais do Instagram como referência <small>(opcional)</small></h2><p>Ao escolher um Reel, o sistema tenta ler cortes, ritmo, motion e timing do vídeo real. Se essa análise falhar, a geração é interrompida em vez de fingir fidelidade.</p></div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}><span className={styles.count}>{selectedReferences.length}/8 selecionados</span><button className={styles.secondary} type="button" disabled={syncingInstagram} onClick={syncReferences}>{syncingInstagram ? "Sincronizando…" : "Sincronizar @inteli.academy"}</button></div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}><span className={styles.count}>{selectedReferences.length}/{MAX_STUDIO_REFERENCES} selecionados</span><button className={styles.secondary} type="button" disabled={syncingInstagram} onClick={syncReferences}>{syncingInstagram ? "Sincronizando…" : "Sincronizar @inteli.academy"}</button></div>
         </div>
         <div className={styles.referenceGrid}>
           <button type="button" className={`${styles.reference} ${selectedReferences.length === 0 ? styles.referenceActive : ""}`} onClick={() => setSelectedReferences([])}><div className={styles.referenceImage} /><div className={styles.referenceBody}><strong>Sem referências específicas</strong><span>Usar o histórico real completo + Social Media como principal fonte visual do Figma.</span></div></button>
@@ -181,11 +182,11 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       </section>
 
       <section className={styles.section}>
-        <div className={styles.toolbar}><div><h2>5. Mídia do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? "Selecione vários vídeos para montagem. Você pode selecionar também uma única faixa de áudio; sem faixa dedicada, o Reel mantém o áudio dos takes." : "O sistema só pode usar os arquivos que você selecionar."}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => enableDrive(event.target.checked)} /> Usar Drive</label></div>
+        <div className={styles.toolbar}><div><h2>5. Mídia do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} mídias para ampliar o pool de montagem. Você pode selecionar também uma única faixa de áudio; sem faixa dedicada, o Reel mantém o áudio dos takes.` : `O sistema só pode usar os arquivos que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => enableDrive(event.target.checked)} /> Usar Drive</label></div>
         {!driveConnected ? <p><a href="/api/drive/connect">Conecte o Google Drive em Configurações</a> para habilitar a biblioteca.</p> : null}
         {loadingDrive ? <p>Carregando biblioteca de mídia…</p> : null}
         {useDrive && !loadingDrive ? <>
-          <span className={styles.count}>{selectedAssets.length}/12 selecionados · {contentType === "reel" ? `${selectedVideoCount} vídeo(s)${selectedAudio ? ` · trilha: ${selectedAudio.name}` : " · áudio dos takes"}` : "imagens"}</span>
+          <span className={styles.count}>{selectedAssets.length}/{MAX_STUDIO_DRIVE_ASSETS} selecionados · {contentType === "reel" ? `${selectedVideoCount} vídeo(s)${selectedAudio ? ` · trilha: ${selectedAudio.name}` : " · áudio dos takes"}` : "imagens"}</span>
           <div className={styles.mediaGrid}>{compatibleAssets.map((asset) => {
             const isVideo = asset.mimeType.startsWith("video/");
             const isAudio = asset.mimeType.startsWith("audio/");

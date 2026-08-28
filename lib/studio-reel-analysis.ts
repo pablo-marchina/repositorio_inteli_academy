@@ -426,11 +426,44 @@ export function buildReelEditingPlan(input: { assets: DriveAsset[]; footage: Foo
   const grid = rhythmGrid(target, input.reference, input.music ?? null);
   const durations = snapDurationsToBeats(rawDurations, target, grid.beats);
   const analyses = input.footage.length ? input.footage : videos.map(fallbackSegments);
+
+  const allCandidates = analyses.flatMap((analysis) => analysis.bestSegments.map((segment) => ({ analysis, segment })))
+    .sort((a, b) => {
+      const scoreDiff = b.segment.score - a.segment.score;
+      if (scoreDiff) return scoreDiff;
+      if (a.analysis.analysisMode !== b.analysis.analysisMode) return a.analysis.analysisMode === "video" ? -1 : 1;
+      return (b.segment.endSeconds - b.segment.startSeconds) - (a.segment.endSeconds - a.segment.startSeconds);
+    });
+
+  const selectedCandidates: typeof allCandidates = [];
+  const seenAssets = new Set<string>();
+  for (const candidate of allCandidates) {
+    if (seenAssets.has(candidate.analysis.assetId)) continue;
+    selectedCandidates.push(candidate);
+    seenAssets.add(candidate.analysis.assetId);
+    if (selectedCandidates.length >= desiredCount) break;
+  }
+
+  if (selectedCandidates.length < desiredCount) {
+    const perAssetUsage = new Map<string, number>();
+    selectedCandidates.forEach((candidate) => perAssetUsage.set(candidate.analysis.assetId, 1));
+    for (const candidate of allCandidates) {
+      if (selectedCandidates.includes(candidate)) continue;
+      const used = perAssetUsage.get(candidate.analysis.assetId) ?? 0;
+      if (used >= 2) continue;
+      selectedCandidates.push(candidate);
+      perAssetUsage.set(candidate.analysis.assetId, used + 1);
+      if (selectedCandidates.length >= desiredCount) break;
+    }
+  }
+
+  if (!selectedCandidates.length) throw new Error("Nenhum segmento de vídeo válido ficou disponível para montar o Reel.");
+
   const shots: ReelEditingShot[] = [];
   let timelineStart = 0;
   for (let index = 0; index < desiredCount; index += 1) {
-    const analysis = analyses[index % analyses.length];
-    const segment = analysis.bestSegments[Math.floor(index / analyses.length) % analysis.bestSegments.length] ?? analysis.bestSegments[0];
+    const candidate = selectedCandidates[index % selectedCandidates.length];
+    const { analysis, segment } = candidate;
     const duration = Math.min(durations[index], Math.max(.58, analysis.durationSeconds));
     const maxStart = Math.max(0, analysis.durationSeconds - duration);
     const sourceIn = clamp(segment.startSeconds, 0, maxStart);
@@ -451,7 +484,7 @@ export function buildReelEditingPlan(input: { assets: DriveAsset[]; footage: Foo
         zoom: analysis.width && analysis.height && analysis.width > analysis.height ? 1.08 : 1
       },
       transition: "cut",
-      reason: `${segment.reason} · corte alinhado à grade rítmica · focal tracking ${segment.motion}`
+      reason: `${segment.reason} · score ${segment.score.toFixed(0)}/100 · selecionado do pool global · corte alinhado à grade rítmica · focal tracking ${segment.motion}`
     });
     timelineStart += actualDuration;
   }
