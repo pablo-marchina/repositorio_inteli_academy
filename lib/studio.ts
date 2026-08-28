@@ -225,10 +225,10 @@ function reusableReelPlan(payload: StructuredStudioPayload) {
   const plan = payload.artifact?.reelPlan;
   if (!plan) return undefined;
   const semanticVersion = plan.analysisSummary?.semanticVersion ?? 0;
-  const referenceIsCurrent = !plan.reference || (plan.reference.semanticVersion ?? 0) >= 2;
+  const referenceIsCurrent = !plan.reference || (plan.reference.semanticVersion ?? 0) >= 3;
   const analysisByAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
   const everyUsedShotWasAnalyzed = plan.shots.length > 0 && plan.shots.every((shot) => analysisByAsset.get(shot.assetId)?.analysisMode !== "metadata-fallback");
-  return semanticVersion >= 2 && referenceIsCurrent && everyUsedShotWasAnalyzed ? plan : undefined;
+  return semanticVersion >= 3 && referenceIsCurrent && everyUsedShotWasAnalyzed ? plan : undefined;
 }
 
 function hasCurrentReelArtifact(payload: StructuredStudioPayload) {
