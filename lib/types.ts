@@ -24,11 +24,7 @@ export type ArticleCandidate = {
   publishedAt: string;
   contentType: "research" | "news" | "tool" | "regulation" | "market" | "other";
   sourceQuality: number;
-  popularity: {
-    points?: number;
-    comments?: number;
-    mentions?: number;
-  };
+  popularity: { points?: number; comments?: number; mentions?: number };
 };
 
 export type StoryCluster = {
@@ -95,12 +91,7 @@ export type GeneratedPost = {
   factualClaims: Array<{ claim: string; sourceUrl: string }>;
 };
 
-export type ReviewResult = {
-  passed: boolean;
-  score: number;
-  issues: string[];
-  corrections: string[];
-};
+export type ReviewResult = { passed: boolean; score: number; issues: string[]; corrections: string[] };
 
 export type InstagramAccount = {
   id: string;
@@ -135,6 +126,10 @@ export type DriveAsset = {
   modifiedTime?: string | null;
   size?: string | null;
   path?: string[];
+  /** Runtime media metadata read directly from Google Drive. */
+  durationMillis?: number | null;
+  width?: number | null;
+  height?: number | null;
 };
 
 export type InstagramReferencePost = {
