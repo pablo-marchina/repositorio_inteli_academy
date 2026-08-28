@@ -3,6 +3,7 @@ import { localReelTemporalFallbackResponse } from "@/lib/local-reel-temporal-fal
 const GEMINI_GENERATE_URL = /^(https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/)([^/:]+)(:generateContent(?:\?.*)?)$/;
 const EMERGENCY_FLASH_MODEL = "gemini-3.1-flash-lite";
 const RETRYABLE_MODEL_STATUSES = new Set([429, 500, 502, 503, 504]);
+const REEL_REFERENCE_PROMPT_MARKER = "Analise temporalmente este Reel REAL";
 
 let installed = false;
 
@@ -27,9 +28,50 @@ function failureLabel(status: number) {
   return `HTTP ${status}`;
 }
 
+function isReelTemporalRequest(init?: Parameters<typeof fetch>[1]) {
+  return typeof init?.body === "string" && init.body.includes(REEL_REFERENCE_PROMPT_MARKER);
+}
+
+function stripJsonFence(value: string) {
+  return value.replace(/^```json\s*|```$/g, "").trim();
+}
+
+async function hasUsableReelTemporalPayload(response: Response) {
+  try {
+    const payload = await response.clone().json() as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const raw = payload.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text ?? "")
+      .join("")
+      .trim();
+    if (!raw) return false;
+
+    const parsed = JSON.parse(stripJsonFence(raw)) as {
+      durationSeconds?: unknown;
+      shots?: unknown;
+    };
+    return typeof parsed.durationSeconds === "number"
+      && Number.isFinite(parsed.durationSeconds)
+      && parsed.durationSeconds > 0
+      && Array.isArray(parsed.shots)
+      && parsed.shots.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function localReelFallbackOr(response: Response, init?: Parameters<typeof fetch>[1]) {
   const localResponse = await localReelTemporalFallbackResponse(init);
   return localResponse ?? response;
+}
+
+async function remoteSuccessOrLocal(response: Response, init?: Parameters<typeof fetch>[1]) {
+  if (!response.ok || !isReelTemporalRequest(init)) return response;
+  if (await hasUsableReelTemporalPayload(response)) return response;
+
+  console.warn("[reel-reference] Gemini returned HTTP 200 without a usable temporal payload; using local FFmpeg fallback");
+  return localReelFallbackOr(response, init);
 }
 
 /**
@@ -37,10 +79,10 @@ async function localReelFallbackOr(response: Response, init?: Parameters<typeof 
  *
  * For quota exhaustion or temporary model outages, the same request is retried
  * against configured fallback models and one low-cost emergency model. Before
- * any terminal non-2xx Gemini response is returned, the wrapper also attempts
- * the deterministic local FFmpeg Reel analyzer. That analyzer is itself scoped
- * to the Instagram Reel temporal-analysis prompt, so all other Gemini requests
- * preserve their normal error semantics.
+ * any terminal non-2xx response is returned, Reel temporal analysis can fall
+ * back to deterministic FFmpeg scene detection. Successful HTTP 200 responses
+ * are also sanity-checked for Reel temporal requests so empty/malformed model
+ * output cannot bypass the local analyzer and later fail schema validation.
  */
 export function installGeminiModelFallback(fallbackModels: string[]) {
   if (installed || typeof globalThis.fetch !== "function") return;
@@ -55,7 +97,7 @@ export function installGeminiModelFallback(fallbackModels: string[]) {
 
     const [, prefix, primaryModel, suffix] = match;
     let response = await nativeFetch(input, init);
-    if (response.ok) return response;
+    if (response.ok) return remoteSuccessOrLocal(response, init);
 
     // A non-retryable remote error must not prevent a valid Reel reference from
     // falling back to the local analyzer. For non-Reel requests this is a no-op.
@@ -79,7 +121,7 @@ export function installGeminiModelFallback(fallbackModels: string[]) {
       response = await nativeFetch(fallbackUrl, init);
       lastModel = fallbackModel;
 
-      if (response.ok) return response;
+      if (response.ok) return remoteSuccessOrLocal(response, init);
       if (!shouldTryAnotherModel(response)) {
         console.warn("[reel-reference] remote fallback ended with a terminal Gemini error; checking local temporal fallback", {
           finalStatus: response.status,
