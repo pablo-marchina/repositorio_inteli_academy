@@ -1,6 +1,7 @@
 import { discoverFigmaDesignSystem, getCurrentFigmaNodes, getCurrentFigmaRenderUrls, getCurrentFigmaSemanticState } from "@/lib/figma";
 import { fetchInstagramPermalink, publishCarousel, publishReel, publishSingleImage, publishStory } from "@/lib/instagram";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { effectiveBrandContext, requiresPartnerBrand } from "@/lib/studio-post-archetype";
 import { asRenderedStudioPayload } from "@/lib/studio-render-types";
 import type { InstagramAccount } from "@/lib/types";
 
@@ -52,11 +53,11 @@ async function assertRealBrandStructure(payload: ReturnType<typeof asRenderedStu
     throw new Error("A marca principal da Inteli Academy não está presente como elemento real do Figma em todos os frames. Reimporte a versão usando o design system descoberto.");
   }
 
-  const partnerRequired = payload.postArchetype === "partnership" || Boolean(payload.brandContext?.partnerName);
-  if (partnerRequired) {
+  if (requiresPartnerBrand(payload)) {
+    const brand = effectiveBrandContext(payload);
     const partnerVisible = semanticFrames.some((frame) => (frame.roles.partnerLogo?.length ?? 0) > 0);
     if (!partnerVisible) {
-      const partner = payload.brandContext?.partnerName ? ` (${payload.brandContext.partnerName})` : "";
+      const partner = brand.partnerName ? ` (${brand.partnerName})` : "";
       throw new Error(`A logo do parceiro${partner} não está resolvida como partnerLogo no Figma. Selecione uma logo oficial/autorizada; o sistema não pode inventar ou recortar a marca de um vídeo.`);
     }
   }
