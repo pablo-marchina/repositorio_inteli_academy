@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import styles from "@/components/ContentWorkbench.module.css";
 import { StudioVideoPreview } from "@/components/StudioVideoPreview";
 import type { StructuredStudioPayload, StudioBrandReport } from "@/lib/studio-artifact";
+import { effectiveBrandContext, effectivePostArchetype } from "@/lib/studio-post-archetype";
 import { asRenderedStudioPayload } from "@/lib/studio-render-types";
 import type { DriveAsset } from "@/lib/types";
 
@@ -19,13 +20,13 @@ function Score({ title, report }: { title: string; report: StudioBrandReport }) 
 }
 
 function BrandStatus({ payload }: { payload: StructuredStudioPayload }) {
-  const archetype = payload.postArchetype ?? "general";
-  const brand = payload.brandContext;
-  const partner = brand?.partnerName;
-  const partnerStatus = brand?.partnerLogoStatus ?? (partner ? "missing" : "not-required");
+  const archetype = effectivePostArchetype(payload);
+  const brand = effectiveBrandContext(payload);
+  const partner = brand.partnerName;
+  const partnerStatus = brand.partnerLogoStatus;
   return <div style={{ border: "1px solid rgba(127,127,127,.2)", borderRadius: 12, padding: 12, fontSize: 13, display: "flex", gap: 18, flexWrap: "wrap" }}>
     <span><strong>Arquétipo:</strong> {archetype}</span>
-    <span><strong>Marca principal:</strong> {brand?.primaryBrandName ?? "Inteli Academy"}</span>
+    <span><strong>Marca principal:</strong> {brand.primaryBrandName}</span>
     {partner ? <span><strong>Parceiro:</strong> {partner}</span> : null}
     <span><strong>Logo do parceiro:</strong> {partnerStatus === "ready" ? "resolvida" : partnerStatus === "missing" ? "pendente — aprovação bloqueada" : "não necessária"}</span>
   </div>;
