@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "postinstall": "node -e \"const fs=require('fs');const p=require('ffmpeg-static');if(!p||!fs.existsSync(p)){throw new Error('ffmpeg-static binary missing')}console.log('ffmpeg-static binary ready')\"",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm run lint && npm run build"
