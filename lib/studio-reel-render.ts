@@ -129,7 +129,8 @@ async function renderWithFfmpeg(input: { payload: StructuredStudioPayload; drive
     const asset = byId.get(id);
     if (!asset) throw new Error(`Asset ${id} não existe mais no projeto.`);
     const downloaded = await downloadDriveAsset(id);
-    const file = join(input.dir, `${id.replace(/[^a-zA-Z0-9_-]/g, "_")}${assetExtension(asset)}`);
+    // The path is created in a runtime tmp directory. It is not a build-time filesystem dependency.
+    const file = join(/* turbopackIgnore: true */ input.dir, `${id.replace(/[^a-zA-Z0-9_-]/g, "_")}${assetExtension(asset)}`);
     await writeFile(file, downloaded.bytes);
     local.set(id, file);
   }
