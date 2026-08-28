@@ -1,4 +1,4 @@
-import { getCurrentFigmaNodes, getCurrentFigmaRenderUrls } from "@/lib/figma";
+import { discoverFigmaDesignSystem, getCurrentFigmaNodes, getCurrentFigmaRenderUrls, getCurrentFigmaSemanticState } from "@/lib/figma";
 import { fetchInstagramPermalink, publishCarousel, publishReel, publishSingleImage, publishStory } from "@/lib/instagram";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { asRenderedStudioPayload } from "@/lib/studio-render-types";
@@ -21,11 +21,44 @@ function assertCurrentReelAnalysis(payload: ReturnType<typeof asRenderedStudioPa
     throw new Error("Este Reel usa uma análise visual legada. Reanalise a versão antes de publicar.");
   }
   if (plan.reference && (plan.reference.semanticVersion ?? 0) < 2) {
-    throw new Error("A referência deste Reel ainda não possui análise semântica atual. Reanalise a versão antes de publicar.");
+    throw new Error("A referência deste Reel ainda não possui análise atual. Reanalise a versão antes de publicar.");
   }
   const byAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
   if (plan.shots.some((shot) => byAsset.get(shot.assetId)?.analysisMode === "metadata-fallback")) {
     throw new Error("O Reel usa pelo menos um shot escolhido por fallback de metadados. Reanalise a mídia antes de publicar.");
+  }
+  if (plan.reference) {
+    const styleMatch = (plan as typeof plan & { styleMatch?: { version?: number; semanticAvailable?: boolean; structureScore?: number } }).styleMatch;
+    if ((styleMatch?.version ?? 0) < 2) {
+      throw new Error("A estrutura visual da referência ainda não passou pelo matcher atual. Reabra/reanalise a versão antes de publicar.");
+    }
+    if (!styleMatch?.semanticAvailable) {
+      throw new Error("A referência ainda não possui confiança semântica suficiente para aprovar função narrativa e estrutura. A versão pode ser revisada, mas não publicada como fiel à referência.");
+    }
+  }
+}
+
+async function assertRealBrandStructure(payload: ReturnType<typeof asRenderedStudioPayload>, frameIds: string[]) {
+  const [designSystem, semanticFrames] = await Promise.all([
+    discoverFigmaDesignSystem(),
+    getCurrentFigmaSemanticState(frameIds)
+  ]);
+  if (!designSystem.pageNames.length || !designSystem.candidateFrames.length) {
+    throw new Error("O Figma conectado não possui uma estrutura de design detectável. Revise o arquivo antes de publicar.");
+  }
+
+  const missingPrimary = semanticFrames.filter((frame) => !(frame.roles.primaryLogo?.length || frame.roles.logo?.length));
+  if (missingPrimary.length) {
+    throw new Error("A marca principal da Inteli Academy não está presente como elemento real do Figma em todos os frames. Reimporte a versão usando o design system descoberto.");
+  }
+
+  const partnerRequired = payload.postArchetype === "partnership" || Boolean(payload.brandContext?.partnerName);
+  if (partnerRequired) {
+    const partnerVisible = semanticFrames.some((frame) => (frame.roles.partnerLogo?.length ?? 0) > 0);
+    if (!partnerVisible) {
+      const partner = payload.brandContext?.partnerName ? ` (${payload.brandContext.partnerName})` : "";
+      throw new Error(`A logo do parceiro${partner} não está resolvida como partnerLogo no Figma. Selecione uma logo oficial/autorizada; o sistema não pode inventar ou recortar a marca de um vídeo.`);
+    }
   }
 }
 
@@ -42,6 +75,7 @@ export async function approveAndPublishFinalStudioProject(projectId: string) {
 
   await admin.from("content_projects").update({ status: "publishing", last_error: null }).eq("id", projectId);
   try {
+    await assertRealBrandStructure(payload, frameIds);
     const account = await activeInstagramAccount();
     const currentFigmaImages = await getCurrentFigmaRenderUrls(frameIds, "png");
     let published: { id: string };
