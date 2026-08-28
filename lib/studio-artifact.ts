@@ -196,17 +196,30 @@ function fallbackPlan(assets: DriveAsset[]) {
       bestSegments: [{
         startSeconds: 0,
         endSeconds: isImage ? duration : Math.min(duration, 2),
-        score: isImage ? 58 : 60,
+        score: 20,
         focalX: .5,
         focalY: .5,
         endFocalX: isImage ? .515 : .5,
         endFocalY: isImage ? .49 : .5,
         motion: isImage ? "low" : "medium",
-        reason: isImage ? "fallback de foto por metadados" : "fallback por metadados"
+        energy: "low",
+        shotType: "other",
+        framing: "other",
+        sceneType: "other",
+        subject: "mídia não analisada visualmente",
+        reason: "fallback por metadados"
       }]
     };
   });
   return buildReelEditingPlan({ assets, footage, reference: null, music: null });
+}
+
+function cueWindow(plan: ReelEditingPlan, index: number, fps: number, durationInFrames: number) {
+  const cue = plan.reference?.textCues[index];
+  if (!cue) return null;
+  const startFrame = Math.max(0, Math.min(durationInFrames - 1, Math.round(cue.startSeconds * fps)));
+  const endFrame = Math.max(startFrame + 1, Math.min(durationInFrames, Math.round(cue.endSeconds * fps)));
+  return { startFrame, durationInFrames: endFrame - startFrame };
 }
 
 function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], suppliedPlan?: ReelEditingPlan): StudioVideoTimeline | undefined {
@@ -243,13 +256,25 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
     1,
     tracks.reduce((max, track) => Math.max(max, track.startFrame + track.durationInFrames), Math.round(plan.targetDurationSeconds * fps))
   );
+
   tracks.push({ id: "graphic-brand", name: "V2 · Brand graphics · Figma", kind: "graphic", role: "decoration", startFrame: 0, durationInFrames, zIndex: 10, editable: true });
-  if (frame.eyebrow) tracks.push({ id: "text-eyebrow", name: "V3 · Eyebrow", kind: "text", role: "eyebrow", startFrame: Math.min(durationInFrames - 1, Math.round(.28 * fps)), durationInFrames: Math.min(Math.round(1.45 * fps), durationInFrames), zIndex: 20, editable: true, text: frame.eyebrow });
-  tracks.push({ id: "text-headline", name: "V4 · Headline", kind: "text", role: "headline", startFrame: Math.min(durationInFrames - 1, Math.round(.48 * fps)), durationInFrames: Math.min(Math.round(2.25 * fps), durationInFrames), zIndex: 30, editable: true, text: frame.title });
-  if (frame.body && durationInFrames > 90) {
-    const bodyDuration = Math.min(Math.round(1.9 * fps), durationInFrames);
-    tracks.push({ id: "text-body", name: "V5 · Contexto final", kind: "text", role: "body", startFrame: Math.max(0, durationInFrames - bodyDuration - Math.round(.5 * fps)), durationInFrames: bodyDuration, zIndex: 40, editable: true, text: frame.body });
+
+  if (plan.reference) {
+    const headlineWindow = cueWindow(plan, 0, fps, durationInFrames);
+    const bodyWindow = cueWindow(plan, 1, fps, durationInFrames);
+    const eyebrowWindow = cueWindow(plan, 2, fps, durationInFrames);
+    if (headlineWindow) tracks.push({ id: "text-headline", name: "V4 · Headline", kind: "text", role: "headline", ...headlineWindow, zIndex: 30, editable: true, text: frame.title });
+    if (bodyWindow && frame.body) tracks.push({ id: "text-body", name: "V5 · Body", kind: "text", role: "body", ...bodyWindow, zIndex: 40, editable: true, text: frame.body });
+    if (eyebrowWindow && frame.eyebrow) tracks.push({ id: "text-eyebrow", name: "V3 · Eyebrow", kind: "text", role: "eyebrow", ...eyebrowWindow, zIndex: 20, editable: true, text: frame.eyebrow });
+  } else {
+    if (frame.eyebrow) tracks.push({ id: "text-eyebrow", name: "V3 · Eyebrow", kind: "text", role: "eyebrow", startFrame: Math.min(durationInFrames - 1, Math.round(.28 * fps)), durationInFrames: Math.min(Math.round(1.45 * fps), durationInFrames), zIndex: 20, editable: true, text: frame.eyebrow });
+    tracks.push({ id: "text-headline", name: "V4 · Headline", kind: "text", role: "headline", startFrame: Math.min(durationInFrames - 1, Math.round(.48 * fps)), durationInFrames: Math.min(Math.round(2.25 * fps), durationInFrames), zIndex: 30, editable: true, text: frame.title });
+    if (frame.body && durationInFrames > 90) {
+      const bodyDuration = Math.min(Math.round(1.9 * fps), durationInFrames);
+      tracks.push({ id: "text-body", name: "V5 · Contexto final", kind: "text", role: "body", startFrame: Math.max(0, durationInFrames - bodyDuration - Math.round(.5 * fps)), durationInFrames: bodyDuration, zIndex: 40, editable: true, text: frame.body });
+    }
   }
+
   tracks.push({ id: "graphic-logo", name: "V6 · Academy logo · Figma", kind: "graphic", role: "logo", startFrame: 0, durationInFrames, zIndex: 50, editable: true });
   if (plan.musicAssetId) {
     tracks.push({ id: "audio-music", name: `A1 · Música · ${byId.get(plan.musicAssetId)?.name ?? plan.musicAssetId}`, kind: "audio", role: "music", startFrame: 0, durationInFrames, sourceStartFrame: 0, zIndex: -10, editable: true, assetId: plan.musicAssetId, volume: .6 });
@@ -258,9 +283,10 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
   const used = [...new Set(plan.shots.map((shot) => shot.assetId))].map((id) => byId.get(id)).filter(Boolean) as DriveAsset[];
   const videoCount = used.filter((asset) => asset.mimeType.startsWith("video/")).length;
   const imageCount = used.filter((asset) => asset.mimeType.startsWith("image/")).length;
-  const beatLabel = plan.beatSource === "music" ? "beats da música" : plan.beatSource === "reference" ? "beats da referência" : "grade rítmica gerada";
-  const structureLabel = plan.reference ? `${plan.reference.shots.length} shots herdados da referência` : `${plan.shots.length} shots estimados dinamicamente`;
-  const executionSummary = `${structureLabel} · ${videoCount} vídeo(s) · ${imageCount} foto(s) · ${(durationInFrames / fps).toFixed(2)}s · ${plan.musicAssetId ? "música dedicada" : "áudio dos takes"} · ${beatLabel} · focal tracking por shot`;
+  const audioLabel = plan.musicAssetId ? "música dedicada analisada" : "áudio natural dos takes; sem alegação de beat-match com a referência";
+  const structureLabel = plan.reference ? `${plan.reference.shots.length} shots semânticos herdados da referência` : `${plan.shots.length} shots estimados dinamicamente`;
+  const coverage = `${Math.round((plan.analysisSummary?.coverage ?? 0) * 100)}% da mídia analisada visualmente`;
+  const executionSummary = `${structureLabel} · ${videoCount} vídeo(s) · ${imageCount} foto(s) · ${(durationInFrames / fps).toFixed(2)}s · ${audioLabel} · ${coverage} · reframing baseado na análise por shot`;
   return {
     schemaVersion: 2,
     engine: "remotion",
@@ -270,10 +296,26 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
     height: 1920,
     durationInFrames,
     tracks,
-    beatFrames: plan.beatSeconds.map((beat) => Math.round(beat * fps)).filter((beat) => beat < durationInFrames),
+    beatFrames: plan.beatSource === "music" ? plan.beatSeconds.map((beat) => Math.round(beat * fps)).filter((beat) => beat < durationInFrames) : [],
     sourceAudio: plan.sourceAudio,
     executionSummary
   };
+}
+
+function semanticMatchRatio(plan: ReelEditingPlan) {
+  if (!plan.reference?.shots.length) return 1;
+  const scores = plan.shots.map((shot, index) => {
+    const reference = plan.reference?.shots[index];
+    if (!reference || !shot.semantic) return 0;
+    let score = 0;
+    if (shot.semantic.shotType === reference.shotType) score += .5;
+    if (shot.semantic.framing === reference.framing) score += .2;
+    if (shot.semantic.motion === reference.motion) score += .15;
+    if (shot.semantic.energy === reference.energy) score += .1;
+    if (shot.semantic.sceneType === reference.sceneType) score += .05;
+    return score;
+  });
+  return scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : 0;
 }
 
 function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeline | undefined, plan: ReelEditingPlan | undefined, assets: DriveAsset[]): StudioBrandReport | undefined {
@@ -281,6 +323,11 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
   const footage = timeline.tracks.filter((track) => track.role === "footage");
   const visuals = assets.filter((asset) => asset.mimeType.startsWith("video/") || asset.mimeType.startsWith("image/"));
   const usedAssets = new Set(footage.flatMap((track) => track.assetId ? [track.assetId] : []));
+  const usedAnalysis = plan.footage.filter((analysis) => usedAssets.has(analysis.assetId));
+  const selectedFallbacks = usedAnalysis.filter((analysis) => analysis.analysisMode === "metadata-fallback").length;
+  const visuallyAnalyzedUsed = usedAnalysis.filter((analysis) => analysis.analysisMode !== "metadata-fallback").length;
+  const analysisCoverage = plan.analysisSummary?.coverage ?? (plan.footage.length ? plan.footage.filter((analysis) => analysis.analysisMode !== "metadata-fallback").length / plan.footage.length : 0);
+
   const boundsOk = footage.every((track) => {
     if (!track.assetId) return false;
     const asset = assets.find((candidate) => candidate.id === track.assetId);
@@ -291,24 +338,30 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
       && (track.sourceStartFrame ?? 0) >= 0
       && (track.sourceEndFrame ?? 0) <= sourceDurationFrames + 1;
   });
+
   const durations = footage.map((track) => track.durationInFrames);
   const variation = new Set(durations.map((value) => Math.round(value / 5) * 5)).size;
   const textFrames = timeline.tracks.filter((track) => track.kind === "text").reduce((sum, track) => sum + track.durationInFrames, 0);
+  const expectedTextFrames = plan.reference?.textCues.reduce((sum, cue) => sum + Math.max(0, Math.round((cue.endSeconds - cue.startSeconds) * timeline.fps)), 0) ?? null;
   const focalTracking = footage.every((track) => track.crop
     && Number.isFinite(track.crop.focalX)
     && Number.isFinite(track.crop.focalY)
     && Number.isFinite(track.crop.endFocalX ?? track.crop.focalX)
     && Number.isFinite(track.crop.endFocalY ?? track.crop.focalY));
+
   const beatFrames = timeline.beatFrames ?? [];
   const cutFrames = footage.slice(1).map((track) => track.startFrame);
   const beatTolerance = Math.max(2, Math.round(.12 * timeline.fps));
   const alignedCuts = cutFrames.filter((cut) => beatFrames.some((beat) => Math.abs(beat - cut) <= beatTolerance)).length;
   const beatAlignmentRatio = cutFrames.length ? alignedCuts / cutFrames.length : 1;
-  const dedicatedMusicIsReal = !plan.musicAssetId
-    || (plan.beatSource === "music" && plan.musicAnalysis?.assetId === plan.musicAssetId && plan.musicAnalysis.beatSeconds.length >= 3);
+  const dedicatedMusicIsReal = !plan.musicAssetId || (plan.beatSource === "music" && plan.musicAnalysis?.assetId === plan.musicAssetId && plan.musicAnalysis.beatSeconds.length >= 3);
   const expectedShots = plan.reference?.shots.length ?? plan.shots.length;
   const shotCountMatches = footage.length === expectedShots && footage.length > 0 && footage.length <= 40;
   const sourceAudioAvailable = Boolean(plan.musicAssetId) || plan.sourceAudio;
+  const semanticRatio = semanticMatchRatio(plan);
+  const semanticReferenceOk = !plan.reference || semanticRatio >= .55;
+  const referenceTextOk = !plan.reference || expectedTextFrames === null || (expectedTextFrames === 0 ? textFrames === 0 : textFrames <= expectedTextFrames * 1.35 + timeline.fps * .25);
+  const visualAnalysisOk = usedAnalysis.length > 0 && selectedFallbacks === 0 && visuallyAnalyzedUsed === usedAnalysis.length && analysisCoverage >= .67;
 
   const checks: StudioBrandReport["checks"] = [
     {
@@ -316,27 +369,40 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
       label: plan.reference ? "Quantidade de shots segue a referência" : "Quantidade de shots foi estimada dinamicamente",
       passed: shotCountMatches,
       severity: "error",
-      detail: plan.reference
-        ? `${footage.length} shots executáveis; a referência analisada possui ${plan.reference.shots.length}.`
-        : `${footage.length} shots executáveis, sem faixa editorial fixa de 6–12.`
+      detail: plan.reference ? `${footage.length} shots executáveis; a referência analisada possui ${plan.reference.shots.length}.` : `${footage.length} shots executáveis, sem faixa editorial fixa de 6–12.`
+    },
+    {
+      id: "visual-analysis-coverage",
+      label: "Shots usados foram realmente analisados visualmente",
+      passed: visualAnalysisOk,
+      severity: "error",
+      detail: `${visuallyAnalyzedUsed}/${usedAnalysis.length} mídias usadas têm análise visual real; ${selectedFallbacks} fallback(s) usado(s); cobertura global ${Math.round(analysisCoverage * 100)}%.`
+    },
+    {
+      id: "semantic-reference",
+      label: "Função visual dos shots segue a referência",
+      passed: semanticReferenceOk,
+      severity: "error",
+      detail: plan.reference ? `Similaridade semântica média ${(semanticRatio * 100).toFixed(0)}% considerando função do shot, enquadramento, movimento, energia e tipo de cena.` : "Sem Reel específico como referência semântica."
     },
     {
       id: "asset-diversity",
       label: "Variedade de mídia",
       passed: usedAssets.size >= Math.min(3, visuals.length, footage.length),
       severity: "warning",
-      detail: `${usedAssets.size}/${visuals.length} visuais selecionados usados (vídeos + fotos).`
+      detail: `${usedAssets.size}/${visuals.length} visuais selecionados usados; repetição semântica também é penalizada durante a seleção.`
     },
     { id: "source-bounds", label: "In/out respeitam a mídia fonte", passed: boundsOk, severity: "error", detail: "Vídeos são validados contra durationMillis do Drive; fotos são stills sem sourceOut temporal de vídeo." },
-    { id: "audio", label: "Reel possui áudio", passed: sourceAudioAvailable, severity: "error", detail: plan.musicAssetId ? "Track de música dedicada." : "Áudio dos próprios vídeos permanece ativo; shots de foto recebem silêncio no trecho correspondente." },
-    { id: "music-beats", label: "Música dedicada foi analisada de verdade", passed: dedicatedMusicIsReal, severity: "error", detail: plan.musicAssetId ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats detectados na faixa selecionada; fonte=${plan.beatSource}.` : "Sem música dedicada; a grade usa referência ou fallback rítmico." },
-    { id: "beat-alignment", label: "Cortes acompanham a grade rítmica disponível", passed: cutFrames.length <= 1 || beatFrames.length < 3 || beatAlignmentRatio >= .6, severity: "warning", detail: `${alignedCuts}/${cutFrames.length} cortes internos estão a até ${(beatTolerance / timeline.fps).toFixed(2)}s de um beat/acento quando há grade suficiente.` },
-    { id: "focal-tracking", label: "Focal tracking por shot", passed: focalTracking, severity: "error", detail: "Vídeos carregam reframe inicial/final e fotos podem usar pan/zoom sutil 9:16." },
-    { id: "rhythm", label: "Ritmo respeita a referência", passed: plan.reference ? footage.length === plan.reference.shots.length : variation >= Math.min(2, footage.length), severity: "warning", detail: plan.reference ? `A cadência foi construída com o padrão de ${plan.reference.shots.length} shots da referência.` : `${variation} durações distintas de shot na estimativa dinâmica.` },
-    { id: "short-typography", label: "Texto não permanece no vídeo inteiro", passed: textFrames / Math.max(1, timeline.durationInFrames) <= 1.1, severity: "warning", detail: "Eyebrow/headline abrem o Reel e o body, quando existe, aparece apenas como contexto curto no final." },
+    { id: "audio", label: "Reel possui áudio", passed: sourceAudioAvailable, severity: "error", detail: plan.musicAssetId ? "Track de música dedicada." : "Áudio natural dos takes permanece ativo; ele não é tratado como se estivesse sincronizado aos beats da referência." },
+    { id: "music-beats", label: "Música dedicada foi analisada de verdade", passed: dedicatedMusicIsReal, severity: "error", detail: plan.musicAssetId ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats detectados na faixa selecionada; fonte=${plan.beatSource}.` : "Sem música dedicada; beat-alignment é desativado para não gerar falso positivo com o áudio dos takes." },
+    { id: "beat-alignment", label: "Cortes acompanham a música quando existe música analisada", passed: plan.beatSource !== "music" || cutFrames.length <= 1 || beatFrames.length < 3 || beatAlignmentRatio >= .6, severity: "warning", detail: plan.beatSource === "music" ? `${alignedCuts}/${cutFrames.length} cortes internos estão a até ${(beatTolerance / timeline.fps).toFixed(2)}s de um beat da música.` : "Não há música dedicada analisada; este check não usa beats da referência para fingir sincronização do áudio final." },
+    { id: "focal-tracking", label: "Reframing deriva de análise visual", passed: focalTracking && selectedFallbacks === 0, severity: "error", detail: "Focais inicial/final são aceitos apenas quando a mídia usada passou por análise visual real." },
+    { id: "rhythm", label: "Ritmo respeita a referência", passed: plan.reference ? footage.length === plan.reference.shots.length : variation >= Math.min(2, footage.length), severity: "warning", detail: plan.reference ? `A duração relativa dos ${plan.reference.shots.length} shots vem do padrão real da referência.` : `${variation} durações distintas de shot na estimativa dinâmica.` },
+    { id: "reference-typography", label: "Texto acompanha os cues reais da referência", passed: referenceTextOk, severity: "error", detail: plan.reference ? `${plan.reference.textCues.length} cue(s) de texto detectado(s) na referência; ${textFrames} frames de texto executados.` : "Sem referência específica; usa janelas editoriais curtas padrão." },
     { id: "semantic-execution", label: "StyleSummary não substitui a timeline", passed: plan.shots.length === footage.length && Boolean(timeline.executionSummary), severity: "error", detail: `Plano semântico validado contra execução: ${timeline.executionSummary}.` },
-    { id: "reference-temporal", label: "Referência de Reel foi lida temporalmente", passed: !plan.reference || plan.reference.shots.length > 0, severity: "error", detail: plan.reference ? `${plan.reference.shots.length} shots analisados na referência e usados como estrutura-alvo.` : "Nenhuma referência de Reel específica foi exigida nesta geração." }
+    { id: "reference-temporal", label: "Referência foi lida visual e temporalmente", passed: !plan.reference || (plan.reference.shots.length > 0 && (plan.reference.semanticVersion ?? 0) >= 2), severity: "error", detail: plan.reference ? `${plan.reference.shots.length} shots com análise semântica v${plan.reference.semanticVersion ?? 0}.` : "Nenhuma referência de Reel específica foi exigida nesta geração." }
   ];
+
   const failures = checks.filter((check) => !check.passed);
   const score = Math.max(0, 100 - failures.reduce((sum, check) => sum + (check.severity === "error" ? 20 : 8), 0));
   return {
