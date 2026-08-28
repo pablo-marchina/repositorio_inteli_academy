@@ -9,12 +9,17 @@ import { compileStudioArtifact, type StructuredStudioPayload, type StudioBrandRe
 import type { FootageAnalysis, ReelEditingPlan, ReelEditingShot } from "@/lib/studio-reel-analysis";
 import type { DriveAsset, StudioPayload } from "@/lib/types";
 
-const STYLE_MATCH_VERSION = 1;
-const SIGNATURE_WIDTH = 24;
-const SIGNATURE_HEIGHT = 42;
-const GRID_X = 4;
-const GRID_Y = 7;
+const STYLE_MATCH_VERSION = 2;
+const SIGNATURE_WIDTH = 36;
+const SIGNATURE_HEIGHT = 64;
+const GRID_X = 6;
+const GRID_Y = 8;
 const MICRO_TAIL_SECONDS = .35;
+const MICRO_TAIL_DISTINCT_DELTA = .18;
+const MIN_AVERAGE_SIMILARITY = .68;
+const MIN_SHOT_SIMILARITY = .5;
+const MIN_SEQUENCE_SIMILARITY = .65;
+const MIN_STRUCTURE_SCORE = .66;
 
 type VisualSignature = number[];
 
@@ -22,9 +27,15 @@ type StyleMatchMeta = {
   version: number;
   method: "local-frame-signature";
   averageSimilarity: number;
+  minimumSimilarity: number;
+  sequenceSimilarity: number;
+  structureScore: number;
+  shotSimilarities: number[];
   matchedShots: number;
   referenceShots: number;
   removedMicroTail: boolean;
+  preservedMeaningfulMicroTail: boolean;
+  semanticAvailable: boolean;
   matchedAt: string;
 };
 
@@ -72,9 +83,7 @@ function captureFrame(file: string, timeSeconds: number) {
     const chunks: Buffer[] = [];
     let stderr = "";
     child.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-    child.stderr.on("data", (chunk) => {
-      stderr = `${stderr}${String(chunk)}`.slice(-6000);
-    });
+    child.stderr.on("data", (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-6000); });
     child.on("error", reject);
     child.on("close", (code) => {
       if (code !== 0) return reject(new Error(`FFmpeg não extraiu frame para matching (${code}): ${stderr.slice(-3000)}`));
@@ -151,29 +160,81 @@ function similarity(a: VisualSignature, b: VisualSignature) {
   return clamp(1 - rms / .55, 0, 1);
 }
 
+function sequenceSimilarity(reference: VisualSignature[], selected: VisualSignature[]) {
+  const pairs = Math.min(reference.length, selected.length) - 1;
+  if (pairs <= 0) return 1;
+  let total = 0;
+  for (let index = 1; index <= pairs; index += 1) {
+    const referenceDelta = 1 - similarity(reference[index - 1], reference[index]);
+    const selectedDelta = 1 - similarity(selected[index - 1], selected[index]);
+    total += clamp(1 - Math.abs(referenceDelta - selectedDelta) / .35, 0, 1);
+  }
+  return total / pairs;
+}
+
 function transition(value: string): "cut" | "dissolve" {
   return /dissolve|fade|cross/i.test(value) ? "dissolve" : "cut";
 }
 
-function styleCheck(meta: StyleMatchMeta): StudioBrandReport["checks"][number] {
-  const passed = meta.averageSimilarity >= .42;
-  return {
-    id: "reference-visual-style",
-    label: "Composição visual segue a referência",
-    passed,
-    severity: passed ? "warning" : "error",
-    detail: `${meta.matchedShots}/${meta.referenceShots} shots foram remapeados por comparação direta de frames; similaridade visual média ${(meta.averageSimilarity * 100).toFixed(0)}%.${meta.removedMicroTail ? " O micro-shot residual no fim da referência foi removido." : ""}`
-  };
+function styleChecks(meta: StyleMatchMeta): StudioBrandReport["checks"] {
+  const averagePassed = meta.averageSimilarity >= MIN_AVERAGE_SIMILARITY;
+  const floorPassed = meta.minimumSimilarity >= MIN_SHOT_SIMILARITY;
+  const sequencePassed = meta.sequenceSimilarity >= MIN_SEQUENCE_SIMILARITY;
+  const structurePassed = meta.structureScore >= MIN_STRUCTURE_SCORE;
+  return [
+    {
+      id: "reference-visual-style",
+      label: "Composição visual segue a referência",
+      passed: averagePassed && structurePassed,
+      severity: averagePassed && structurePassed ? "warning" : "error",
+      detail: `${meta.matchedShots}/${meta.referenceShots} shots comparados por pixels; similaridade média ${(meta.averageSimilarity * 100).toFixed(0)}%; structure score ${(meta.structureScore * 100).toFixed(0)}%.`
+    },
+    {
+      id: "reference-shot-floor",
+      label: "Nenhum shot esconde baixa fidelidade atrás da média",
+      passed: floorPassed,
+      severity: floorPassed ? "warning" : "error",
+      detail: `Pior shot ${(meta.minimumSimilarity * 100).toFixed(0)}%; mínimo exigido ${(MIN_SHOT_SIMILARITY * 100).toFixed(0)}%. Scores: ${meta.shotSimilarities.map((value) => `${Math.round(value * 100)}%`).join(", ")}.`
+    },
+    {
+      id: "reference-sequence-structure",
+      label: "Mudanças visuais entre cortes seguem a estrutura",
+      passed: sequencePassed,
+      severity: sequencePassed ? "warning" : "error",
+      detail: `Equivalência da progressão entre cortes ${(meta.sequenceSimilarity * 100).toFixed(0)}%; mínimo exigido ${(MIN_SEQUENCE_SIMILARITY * 100).toFixed(0)}%.`
+    },
+    {
+      id: "reference-semantic-confidence",
+      label: "Função narrativa da referência foi compreendida",
+      passed: meta.semanticAvailable,
+      severity: "error",
+      detail: meta.semanticAvailable
+        ? "A referência possui classificação semântica suficiente para validar função narrativa, enquadramento e cena."
+        : "A referência foi lida temporalmente/visualmente, mas sua semântica está indisponível. A montagem pode ser revisada, porém não pode ser aprovada como fiel à estrutura narrativa."
+    },
+    {
+      id: "reference-micro-tail",
+      label: "Micro-shots finais são tratados por significado visual",
+      passed: true,
+      severity: "info",
+      detail: meta.removedMicroTail
+        ? "Um micro-shot final visualmente redundante foi removido."
+        : meta.preservedMeaningfulMicroTail
+          ? "Um micro-shot curto foi preservado porque era visualmente distinto/possivelmente intencional."
+          : "Nenhum micro-shot residual precisou ser alterado."
+    }
+  ];
 }
 
 function withStyleQuality(report: StudioBrandReport | undefined, meta: StyleMatchMeta): StudioBrandReport | undefined {
   if (!report) return report;
-  const check = styleCheck(meta);
-  const checks = [...report.checks.filter((item) => item.id !== check.id), check];
-  const issues = [...(report.issues ?? []).filter((item) => !/similaridade visual média/i.test(item))];
-  if (!check.passed) issues.push(check.detail);
+  const ids = new Set(["reference-visual-style", "reference-shot-floor", "reference-sequence-structure", "reference-semantic-confidence", "reference-micro-tail"]);
+  const added = styleChecks(meta);
+  const checks = [...report.checks.filter((item) => !ids.has(item.id)), ...added];
+  const issues = [...(report.issues ?? []).filter((item) => !/similaridade visual média|structure score|pior shot|progressão entre cortes|semântica está indisponível/i.test(item))];
+  for (const check of added) if (!check.passed && check.severity === "error") issues.push(check.detail);
   const hardFailure = checks.some((item) => !item.passed && item.severity === "error");
-  const score = Math.max(0, Math.min(report.score, Math.round(55 + meta.averageSimilarity * 45)));
+  const score = Math.max(0, Math.min(report.score, Math.round(meta.structureScore * 100)));
   return { ...report, checks, issues, score, passed: !hardFailure && score >= 80 };
 }
 
@@ -185,19 +246,39 @@ async function downloadReferenceVideo(url: string, output: string) {
   await writeFile(output, new Uint8Array(await response.arrayBuffer()));
 }
 
-function keepReferenceShots(plan: ReelEditingPlan) {
+async function resolveReferenceShots(plan: ReelEditingPlan, referenceFile: string) {
   const source = [...(plan.reference?.shots ?? [])];
   let removedMicroTail = false;
+  let preservedMeaningfulMicroTail = false;
   while (source.length > 1) {
     const last = source[source.length - 1];
+    const previous = source[source.length - 2];
     const duration = last.endSeconds - last.startSeconds;
     if (duration >= MICRO_TAIL_SECONDS) break;
-    const meaningfulSemantic = plan.reference?.semanticAvailable && ["closing", "brand"].includes(last.shotType);
-    if (meaningfulSemantic) break;
-    source.pop();
-    removedMicroTail = true;
+    const meaningfulSemantic = Boolean(plan.reference?.semanticAvailable && ["closing", "brand"].includes(last.shotType));
+    if (meaningfulSemantic) {
+      preservedMeaningfulMicroTail = true;
+      break;
+    }
+    try {
+      const [previousSignature, tailSignature] = await Promise.all([
+        signatureAt(referenceFile, (previous.startSeconds + previous.endSeconds) / 2),
+        signatureAt(referenceFile, (last.startSeconds + last.endSeconds) / 2)
+      ]);
+      const visualDelta = 1 - similarity(previousSignature, tailSignature);
+      if (visualDelta >= MICRO_TAIL_DISTINCT_DELTA) {
+        preservedMeaningfulMicroTail = true;
+        break;
+      }
+      source.pop();
+      removedMicroTail = true;
+    } catch {
+      // If we cannot prove that the short shot is redundant, preserve it.
+      preservedMeaningfulMicroTail = true;
+      break;
+    }
   }
-  return { shots: source, removedMicroTail };
+  return { shots: source, removedMicroTail, preservedMeaningfulMicroTail };
 }
 
 export async function rematchStudioVersionToReference(projectId: string, versionId: string) {
@@ -243,13 +324,12 @@ export async function rematchStudioVersionToReference(projectId: string, version
   const analyses = originalPlan.footage.filter((analysis) => byAsset.has(analysis.assetId) && analysis.analysisMode !== "metadata-fallback");
   if (!analyses.length) return { changed: false, reason: "no-visual-analysis" as const };
 
-  const { shots: referenceShots, removedMicroTail } = keepReferenceShots(originalPlan);
-  if (!referenceShots.length) return { changed: false, reason: "no-reference-shots" as const };
-
   const dir = await mkdtemp(join(tmpdir(), "academy-reference-style-"));
   try {
     const referenceFile = join(dir, "reference.mp4");
     await downloadReferenceVideo(String(referenceRow.media_url), referenceFile);
+    const { shots: referenceShots, removedMicroTail, preservedMeaningfulMicroTail } = await resolveReferenceShots(originalPlan, referenceFile);
+    if (!referenceShots.length) return { changed: false, reason: "no-reference-shots" as const };
 
     const neededAssets = analyses.map((analysis) => byAsset.get(analysis.assetId)!).filter(Boolean);
     const local = new Map<string, string>();
@@ -308,20 +388,26 @@ export async function rematchStudioVersionToReference(projectId: string, version
         const direct = similarity(candidate.signature, referenceSignature);
         const available = candidate.segment.endSeconds - candidate.segment.startSeconds;
         let score = direct * 100 + candidate.segment.score * .12;
-        score -= (usedAssets.get(candidate.analysis.assetId) ?? 0) * 38;
-        if (available + .04 < requestedDuration) score -= Math.min(35, (requestedDuration - available) * 8);
+        score -= (usedAssets.get(candidate.analysis.assetId) ?? 0) * 42;
+        if (available + .04 < requestedDuration) score -= Math.min(40, (requestedDuration - available) * 8);
         if (candidate.segment.motion === referenceShot.motion) score += 5;
         if (candidate.segment.energy === referenceShot.energy) score += 4;
+        if (originalPlan.reference?.semanticAvailable) {
+          if (candidate.segment.shotType === referenceShot.shotType) score += 14;
+          else score -= 8;
+          if (candidate.segment.framing === referenceShot.framing) score += 10;
+          if (candidate.segment.sceneType === referenceShot.sceneType) score += 8;
+        }
 
         if (previousReference && previousSelected) {
           const referenceDelta = 1 - similarity(previousReference, referenceSignature);
           const candidateDelta = 1 - similarity(previousSelected, candidate.signature);
-          score -= Math.abs(referenceDelta - candidateDelta) * 65;
-          if (referenceDelta > .11 && candidateDelta < .055) score -= 26;
+          score -= Math.abs(referenceDelta - candidateDelta) * 80;
+          if (referenceDelta > .11 && candidateDelta < .055) score -= 32;
         }
         for (const chosen of selectedSignatures) {
           const duplicateSimilarity = similarity(chosen, candidate.signature);
-          if (duplicateSimilarity > .94) score -= (duplicateSimilarity - .94) * 300 + 18;
+          if (duplicateSimilarity > .92) score -= (duplicateSimilarity - .92) * 360 + 24;
         }
         return { candidate, direct, score };
       }).sort((a, b) => b.score - a.score);
@@ -371,7 +457,7 @@ export async function rematchStudioVersionToReference(projectId: string, version
           motion: referenceShot.motion,
           energy: referenceShot.energy
         },
-        reason: `${segment.reason} · matching local por pixels ${(selected.direct * 100).toFixed(0)}% · shot ${index + 1}/${referenceShots.length} alinhado à composição da referência`
+        reason: `${segment.reason} · matching estrutural por pixels ${(selected.direct * 100).toFixed(0)}% · shot ${index + 1}/${referenceShots.length}`
       });
       timelineStart += actualDuration;
       usedAssets.set(analysis.assetId, (usedAssets.get(analysis.assetId) ?? 0) + 1);
@@ -381,13 +467,22 @@ export async function rematchStudioVersionToReference(projectId: string, version
 
     if (!rematchedShots.length) return { changed: false, reason: "no-rematched-shots" as const };
     const averageSimilarity = similarities.reduce((sum, value) => sum + value, 0) / similarities.length;
+    const minimumSimilarity = Math.min(...similarities);
+    const sequence = sequenceSimilarity(referenceSignatures.slice(0, selectedSignatures.length), selectedSignatures);
+    const structureScore = averageSimilarity * .5 + minimumSimilarity * .2 + sequence * .3;
     const meta: StyleMatchMeta = {
       version: STYLE_MATCH_VERSION,
       method: "local-frame-signature",
       averageSimilarity,
+      minimumSimilarity,
+      sequenceSimilarity: sequence,
+      structureScore,
+      shotSimilarities: similarities,
       matchedShots: rematchedShots.length,
       referenceShots: referenceShots.length,
       removedMicroTail,
+      preservedMeaningfulMicroTail,
+      semanticAvailable: Boolean(originalPlan.reference?.semanticAvailable),
       matchedAt: new Date().toISOString()
     };
     const reference = {
@@ -433,7 +528,12 @@ export async function rematchStudioVersionToReference(projectId: string, version
       versionId,
       shots: rematchedShots.length,
       averageSimilarity: Number(averageSimilarity.toFixed(3)),
-      removedMicroTail
+      minimumSimilarity: Number(minimumSimilarity.toFixed(3)),
+      sequenceSimilarity: Number(sequence.toFixed(3)),
+      structureScore: Number(structureScore.toFixed(3)),
+      semanticAvailable: meta.semanticAvailable,
+      removedMicroTail,
+      preservedMeaningfulMicroTail
     });
     return { changed: true, styleMatch: meta };
   } finally {
