@@ -13,6 +13,9 @@
   "engines": {
     "node": ">=22"
   },
+  "allowScripts": {
+    "ffmpeg-static@5.2.0": true
+  },
   "dependencies": {
     "@remotion/player": "^4.0.0",
     "@supabase/ssr": "^0.7.0",
