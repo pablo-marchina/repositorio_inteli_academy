@@ -39,21 +39,33 @@ O inventário também está codificado em `lib/figma-audit.ts`.
 3. Opcionalmente selecionar até 12 artigos para fundamentar uma pauta ou fatos específicos.
 4. Opcionalmente escrever contexto específico.
 5. Opcionalmente escolher até 8 posts reais sincronizados do Instagram como referências diretas. Os selecionados são tratados como um conjunto de referências de mesma prioridade.
-6. Opcionalmente habilitar o Drive e escolher exatamente quais imagens/vídeos podem ser usados.
-7. Gerar a V1.
+6. Opcionalmente habilitar o Drive e escolher exatamente quais mídias podem ser usadas. Para Reel, selecione vários vídeos e, se quiser, uma faixa de áudio dedicada.
+7. Gerar a V1. Em Reel, o backend analisa a referência em vídeo, o footage e a faixa de áudio antes de criar a timeline.
 8. No workbench, pedir alterações em linguagem natural. Cada pedido cria V2/V3/... sem sobrescrever as versões anteriores.
 9. Escolher uma versão e clicar em **Enviar ao Figma**. Somente essa versão entra na fila.
 10. No Figma, executar o plugin interno `Inteli Academy Content Bridge`. O plugin cria frames editáveis em `Academy • Gerações` e devolve os node IDs ao backend.
 11. Revisar e editar livremente os frames no Figma.
-12. Voltar ao workbench e clicar em **Aprovar Figma e publicar no Instagram**.
-13. O servidor consulta/exporta novamente os node IDs atuais do Figma naquele momento e só então publica.
+12. Para Reel, o workbench renderiza o MP4 final a partir da timeline v2 + estado atual do Figma e executa QA sobre frames do próprio MP4. Se o QA falhar, a versão não pode ser publicada.
+13. Aprovar e publicar. O servidor relê o estado/versão atual do Figma no momento da publicação; Reel publica exatamente o MP4 aprovado e bloqueia publicação se o Figma mudou depois do render.
 
 ## Formatos
 
 - `single`: 1 frame 1080×1350; publicação de imagem única.
 - `carousel`: 2–10 frames 1080×1350; publicação em ordem.
 - `story`: 1 frame 1080×1920; o frame final do Figma é publicado.
-- `reel`: vídeo explicitamente escolhido no Drive. O frame 1080×1920 é criado/revisado no Figma como direção/capa visual. O fluxo estruturado também oferece preview temporal e exports de edição; a publicação atual mantém o vídeo explicitamente selecionado como mídia do Reel até existir um artefato final de motion aprovado separadamente.
+- `reel`: timeline v2 1080×1920 com 6–12 shots de vários vídeos, source in/out limitados pela duração real do Drive, focal tracking por shot, tipografia curta, áudio dos takes ou uma trilha dedicada, cortes alinhados a beats/accentos e brand layers derivados do Figma. O Reel só é publicável quando timeline QA + render QA passam e o MP4 final está associado à mesma versão atual do Figma.
+
+### Pipeline de Reel
+
+1. **Referência real**: se um Reel do Instagram foi selecionado, o sistema analisa o vídeo real para obter duração, shot boundaries, motion, energia, texto e acentos/beat timestamps. Se não conseguir analisar a referência escolhida, a geração falha em vez de fingir fidelidade.
+2. **Footage**: cada vídeo do Drive é analisado para encontrar segmentos fortes e ponto focal inicial/final. O fallback, quando necessário, continua preso aos metadados reais do arquivo.
+3. **Música**: quando há faixa de áudio dedicada, a faixa é analisada para obter BPM aproximado e beats úteis. O sistema não declara edição no beat se não conseguir analisar a faixa.
+4. **Editing plan**: são escolhidos 6–12 shots, com duração variável, variedade de vídeos e cortes encaixados na grade rítmica.
+5. **Timeline executável**: cada shot guarda `sourceStartFrame`, `sourceEndFrame`, crop/focal tracking, posição temporal e áudio; `StyleSummary` não substitui essa timeline.
+6. **Figma**: logo, decoração e tipografia vêm dos nodes reais sincronizados pelo plugin; Remotion não recria a marca com elementos hardcoded.
+7. **Render final**: FFmpeg gera H.264/AAC a partir da mesma timeline, aplicando trims, focal tracking e layers do Figma.
+8. **QA do render**: frames reais do MP4 são comparados visualmente com o estado aprovado do Figma. O antigo score estrutural sozinho nunca libera um Reel.
+9. **Publicação**: somente o MP4 final aprovado é enviado ao Instagram. Footage bruto nunca é usado como fallback silencioso.
 
 ## Google Drive
 
@@ -67,7 +79,7 @@ Variáveis:
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_DRIVE_ROOT_FOLDER_ID`
 
-A plataforma percorre a pasta raiz e subpastas, lista somente imagens/vídeos e não altera nenhum arquivo.
+A plataforma percorre a pasta raiz e subpastas, lista imagens, vídeos e áudio compatíveis e não altera nenhum arquivo. Para vídeo/áudio, também lê `durationMillis`; para vídeo, lê largura e altura. Esses metadados são usados para validar os limites reais de source in/out.
 
 ## Figma Content Bridge
 
@@ -123,21 +135,22 @@ Callback OAuth:
 
 Cadastre na Meta exatamente o callback mostrado em **Configurações → Instagram**. Em apps ainda em desenvolvimento, a conta profissional usada no teste precisa ter o papel necessário no app — normalmente `Instagram Tester` — e o convite precisa ser aceito pela própria conta.
 
-O Content Studio sincroniza os posts recentes para `instagram_reference_posts`. A análise visual é feita quando um post é escolhido como referência e fica em cache. Em uma geração com múltiplas referências, o modelo procura padrões comuns e combina apenas elementos compatíveis com a identidade da Academy; nenhum post é automaticamente tratado como principal.
+O Content Studio sincroniza os posts recentes para `instagram_reference_posts`. A análise visual/temporal é feita quando um post é escolhido como referência e fica em cache. Em uma geração com múltiplas referências, o modelo procura padrões comuns e combina apenas elementos compatíveis com a identidade da Academy; nenhum post é automaticamente tratado como principal.
 
 Publicação manual do Content Studio sempre exige aprovação explícita no workbench. O pipeline semanal legado continua separado.
 
 ## Modelo de dados
 
-- `instagram_reference_posts`: cache de posts reais e análise visual.
+- `instagram_reference_posts`: cache de posts reais e análise visual/temporal.
 - `drive_connections`: OAuth criptografado do Drive.
-- `content_projects`: brief, artigos opcionais, lista de referências do Instagram, versão escolhida e publicação final.
-- `content_versions`: V1/V2/V3 preservadas e parent version.
+- `content_projects`: brief, artigos opcionais, lista de referências do Instagram, assets autorizados, versão escolhida e publicação final.
+- `content_versions`: V1/V2/V3 preservadas; o payload estruturado contém Scene Graph, Reel editing plan, timeline, QA e referência ao MP4 final aprovado.
 - `figma_jobs`: fila de importação do plugin e node IDs retornados.
+- bucket `studio-renders`: MP4s finais de Reel, endereçados por hash e versionados por projeto/versão.
 
 `content_projects.instagram_reference_media_ids` guarda a lista atual de referências. O campo singular legado é mantido com a primeira referência apenas para compatibilidade com projetos/versões anteriores.
 
-## Segurança
+## Segurança e gates
 
 - tokens OAuth são criptografados com `APP_ENCRYPTION_KEY`;
 - segredos permanecem server-side;
@@ -146,4 +159,8 @@ Publicação manual do Content Studio sempre exige aprovação explícita no wor
 - todas as tabelas do Content Studio usam RLS;
 - sem artigos, `factualClaims` devem permanecer vazias e são validadas no backend;
 - com artigos, cada `factualClaim.sourceUrl` deve pertencer exatamente ao conjunto de artigos selecionados;
-- a publicação lê o Figma novamente no momento da aprovação, evitando publicar um render antigo depois de uma edição manual.
+- Reel exige 6–12 shots, source bounds válidos, áudio, focal tracking e correspondência entre plano semântico e timeline executável;
+- com música dedicada, o QA exige beats detectados na própria faixa e mede o alinhamento dos cortes à grade;
+- um Reel só pode ser publicado após `reelQuality.passed`, `renderQa.passed` e existência de `renderedReel`;
+- a publicação consulta a versão atual do Figma e rejeita um MP4 renderizado antes de uma edição manual posterior;
+- o build valida que o binário `ffmpeg-static` existe antes do deployment, evitando uma falha tardia no primeiro render.
