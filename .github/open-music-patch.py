@@ -1,0 +1,333 @@
+from pathlib import Path
+import re
+
+
+def exact(text, old, new, label):
+    if old not in text:
+        raise SystemExit(f"missing exact block: {label}")
+    return text.replace(old, new, 1)
+
+
+def sub(text, pattern, repl, label, count=1):
+    out, n = re.subn(pattern, repl, text, count=count, flags=re.S)
+    if n != count:
+        raise SystemExit(f"regex {label}: expected {count}, got {n}")
+    return out
+
+
+# Reel analysis: AI chooses music freely, no Drive audio catalog.
+path = Path("lib/studio-reel-analysis.ts")
+s = path.read_text()
+s = exact(s, 'const SEMANTIC_ANALYSIS_VERSION = 3;', 'const SEMANTIC_ANALYSIS_VERSION = 4;', 'semantic v4')
+s = exact(s, '''export type MusicBeatAnalysis = {
+  assetId: string;
+  durationSeconds: number;
+  bpm: number | null;
+  beatSeconds: number[];
+  analysisMode: "audio";
+};''', '''export type MusicBeatAnalysis = {
+  assetId?: string;
+  durationSeconds: number;
+  bpm: number | null;
+  beatSeconds: number[];
+  analysisMode: "audio" | "ai-estimated";
+};
+
+export type MusicDirection = {
+  title: string;
+  artist: string;
+  searchQuery: string;
+  bpm: number;
+  beatOffsetSeconds: number;
+  startOffsetSeconds: number;
+  section: string;
+  reason: string;
+};''', 'music types')
+s = exact(s, '''  musicAssetId?: string;
+  musicAnalysis: MusicBeatAnalysis | null;
+  musicSelectionReason?: string;
+  musicSelectionMode?: "user-selected" | "ai-selected" | "none";''', '''  musicAssetId?: string;
+  musicAnalysis: MusicBeatAnalysis | null;
+  musicDirection?: MusicDirection;
+  musicSelectionReason?: string;
+  musicSelectionMode?: "user-selected" | "ai-selected" | "ai-open-catalog" | "none";''', 'plan music metadata')
+s = exact(s, '''const musicChoiceSchema = z.object({
+  assetId: z.string().min(1),
+  reason: z.string().min(1).max(220)
+});''', '''const musicDirectionSchema = z.object({
+  title: z.string().min(1).max(140),
+  artist: z.string().min(1).max(140),
+  searchQuery: z.string().min(1).max(260),
+  bpm: z.number().min(45).max(220),
+  beatOffsetSeconds: z.number().min(0).max(4).default(0),
+  startOffsetSeconds: z.number().min(0).max(900).default(0),
+  section: z.string().min(1).max(180),
+  reason: z.string().min(1).max(320)
+});''', 'music direction schema')
+
+open_music = r'''async function chooseOpenMusic(input: {
+  context?: string;
+  reference: ReelReferenceTemporalAnalysis | null;
+  targetDurationSeconds: number;
+}) {
+  const referenceSummary = input.reference
+    ? `ritmo=${input.reference.rhythm}; duração=${input.reference.durationSeconds.toFixed(1)}s; média por shot=${input.reference.averageShotSeconds.toFixed(2)}s`
+    : `sem Reel específico; duração alvo=${input.targetDurationSeconds.toFixed(1)}s`;
+  return geminiTextJson(
+    `Você é o music director de um editor profissional de Reels. Escolha livremente UMA música real que combine com este conteúdo. Você NÃO está limitado a Google Drive, uploads do usuário ou uma lista pré-selecionada. Pode escolher uma faixa comercial conhecida ou uma faixa de produção musical, desde que a escolha seja específica e coerente com o contexto. Não cite nem reproduza letras. Contexto editorial: ${(input.context ?? "").slice(0, 2200) || "não informado"}. Referência audiovisual: ${referenceSummary}. Retorne title, artist, searchQuery, BPM aproximado, beatOffsetSeconds relativo ao trecho sugerido, startOffsetSeconds do trecho ideal na faixa, section descrevendo o trecho (ex.: intro, hook, refrão, drop) e reason curto em português. A aplicação buscará a faixa posteriormente em um catálogo licenciado; sua tarefa aqui é escolher e dirigir musicalmente a edição, não escolher um arquivo local.`,
+    musicDirectionSchema
+  );
+}
+
+function musicAnalysisFromDirection(direction: MusicDirection, targetDurationSeconds: number): MusicBeatAnalysis {
+  const beatInterval = 60 / direction.bpm;
+  const firstBeat = clamp(direction.beatOffsetSeconds, 0, Math.max(0, beatInterval));
+  const beatSeconds: number[] = [];
+  for (let beat = firstBeat; beat < targetDurationSeconds + .05; beat += beatInterval) {
+    if (beat > .05) beatSeconds.push(Number(beat.toFixed(3)));
+    if (beatSeconds.length >= 1200) break;
+  }
+  return {
+    durationSeconds: targetDurationSeconds,
+    bpm: direction.bpm,
+    beatSeconds,
+    analysisMode: "ai-estimated"
+  };
+}
+'''
+s = sub(s, r'async function prepareAudioForAnalysis\(.*?\nfunction referenceDurationPattern', open_music + '\nfunction referenceDurationPattern', 'replace Drive music analyzer')
+s = exact(s, '''  music?: MusicBeatAnalysis | null;
+  musicSelectionReason?: string;
+  musicSelectionMode?: "user-selected" | "ai-selected" | "none";''', '''  music?: MusicBeatAnalysis | null;
+  musicDirection?: MusicDirection | null;
+  musicSelectionReason?: string;
+  musicSelectionMode?: "user-selected" | "ai-selected" | "ai-open-catalog" | "none";''', 'build plan input')
+s = exact(s, '''  const audio = input.assets.find((asset) => asset.mimeType.startsWith("audio/"));
+  if (!videos.length && !audio) throw new Error("Um Reel composto somente por imagens precisa de uma faixa de áudio selecionada.");
+
+''', '', 'remove local audio requirement')
+s = exact(s, '''    musicAssetId: audio?.id,
+    musicAnalysis: input.music ?? null,
+    musicSelectionReason: input.musicSelectionReason,
+    musicSelectionMode: input.musicSelectionMode ?? (audio ? "user-selected" : "none"),
+    sourceAudio: !audio && videos.length > 0,''', '''    musicAnalysis: input.music ?? null,
+    musicDirection: input.musicDirection ?? undefined,
+    musicSelectionReason: input.musicSelectionReason,
+    musicSelectionMode: input.musicSelectionMode ?? (input.musicDirection ? "ai-open-catalog" : "none"),
+    sourceAudio: videos.length > 0,''', 'plan return music')
+
+new_analyze = r'''export async function analyzeAndPlanReel(
+  assets: DriveAsset[],
+  references: InstagramReferencePost[],
+  options: { context?: string } = {}
+) {
+  const selectedReel = references.find((reference) => isReelReference(reference));
+  const [reference, footage] = await Promise.all([
+    selectedReel ? analyzeInstagramReelReference(selectedReel) : Promise.resolve(null),
+    analyzeDriveFootage(assets)
+  ]);
+  if (selectedReel && !reference) {
+    throw new Error("A referência de Reel não pôde ser analisada nem semanticamente pelo Gemini nem temporalmente pelo FFmpeg local. Verifique se a mídia do Instagram ainda está acessível.");
+  }
+
+  const visuals = assets.filter(isVisualAsset);
+  const visuallyAnalyzed = footage.filter((analysis) => analysis.analysisMode !== "metadata-fallback").length;
+  const minimumCoverage = visuals.length <= 4 ? 1 : visuals.length <= 8 ? .75 : .67;
+  if (visuals.length && visuallyAnalyzed / visuals.length < minimumCoverage) {
+    throw new Error(`Só ${visuallyAnalyzed}/${visuals.length} mídias tiveram análise visual real/local. O mínimo seguro para esta geração é ${Math.ceil(visuals.length * minimumCoverage)}. O Reel não será montado usando apenas metadados genéricos.`);
+  }
+
+  const targetDurationSeconds = reference ? clamp(reference.durationSeconds, 1, 180) : fallbackTargetDuration(visuals.length);
+  const musicDirection = await chooseOpenMusic({ context: options.context, reference, targetDurationSeconds });
+  if (!musicDirection) {
+    throw new Error("A IA não conseguiu escolher uma trilha musical para este Reel. A geração foi interrompida para não voltar silenciosamente ao catálogo do Drive ou a uma escolha manual.");
+  }
+  const music = musicAnalysisFromDirection(musicDirection, targetDurationSeconds);
+
+  return buildReelEditingPlan({
+    assets,
+    footage,
+    reference,
+    music,
+    musicDirection,
+    musicSelectionReason: musicDirection.reason,
+    musicSelectionMode: "ai-open-catalog"
+  });
+}'''
+s = sub(s, r'export async function analyzeAndPlanReel\(.*?\n\}', new_analyze, 'replace analyzeAndPlanReel')
+path.write_text(s)
+
+# Studio orchestration: Drive only supplies editorial visuals.
+path = Path("lib/studio.ts")
+s = path.read_text()
+s = exact(s, '''function assertFormatMedia(contentType: StudioContentType, assets: DriveAsset[]) {
+  if (contentType === "reel" && !assets.some((asset) => asset.mimeType.startsWith("video/"))) throw new Error("Para gerar um Reel, selecione pelo menos um vídeo do Drive.");
+  if (contentType !== "reel" && assets.some((asset) => asset.mimeType.startsWith("video/") || asset.mimeType.startsWith("audio/"))) throw new Error("Vídeos e áudios do Drive são usados em Reels. Para post, carrossel ou Story selecione imagens.");
+}''', '''function assertFormatMedia(contentType: StudioContentType, assets: DriveAsset[]) {
+  if (assets.some((asset) => asset.mimeType.startsWith("audio/"))) throw new Error("Áudio não é uma mídia editorial selecionável no Drive. A IA escolhe a trilha musical livremente para o Reel.");
+  if (contentType === "reel" && !assets.some((asset) => asset.mimeType.startsWith("video/"))) throw new Error("Para gerar um Reel, selecione pelo menos um vídeo do Drive.");
+  if (contentType !== "reel" && assets.some((asset) => asset.mimeType.startsWith("video/"))) throw new Error("Vídeos do Drive são usados em Reels. Para post, carrossel ou Story selecione imagens.");
+}''', 'media validation')
+s = exact(s, '''  const referenceIsCurrent = !plan.reference || (plan.reference.semanticVersion ?? 0) >= 3;
+  const analysisByAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
+  const everyUsedShotWasAnalyzed = plan.shots.length > 0 && plan.shots.every((shot) => analysisByAsset.get(shot.assetId)?.analysisMode !== "metadata-fallback");
+  return semanticVersion >= 3 && referenceIsCurrent && everyUsedShotWasAnalyzed ? plan : undefined;''', '''  const referenceIsCurrent = !plan.reference || (plan.reference.semanticVersion ?? 0) >= 4;
+  const analysisByAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
+  const everyUsedShotWasAnalyzed = plan.shots.length > 0 && plan.shots.every((shot) => analysisByAsset.get(shot.assetId)?.analysisMode !== "metadata-fallback");
+  const musicIsCurrent = plan.musicSelectionMode === "ai-open-catalog" && Boolean(plan.musicDirection?.title && plan.musicDirection?.artist);
+  return semanticVersion >= 4 && referenceIsCurrent && everyUsedShotWasAnalyzed && musicIsCurrent ? plan : undefined;''', 'reusable v4 plan')
+s = sub(s, r'''  const \[articles, references, selectedDriveAssets, history, musicCatalog\] = await Promise\.all\(\[.*?\n  \]\);
+  assertFormatMedia''', '''  const [articles, references, selectedDriveAssets, history] = await Promise.all([
+    loadArticles(input.articleIds),
+    getReferences(referenceIds),
+    loadDriveAssets(input.useDrive, input.driveAssetIds),
+    historicalInstagramGuidance()
+  ]);
+  assertFormatMedia''', 'create project promise')
+s = sub(s, r'''  const reelPlan = input\.contentType === "reel"\n    \? await analyzeAndPlanReel\(selectedDriveAssets, references, \{ musicCandidates: musicCatalog, context: input\.userContext \}\)\n    : undefined;\n  const selectedMusic = .*?\n    : selectedDriveAssets;''', '''  const reelPlan = input.contentType === "reel"
+    ? await analyzeAndPlanReel(selectedDriveAssets, references, { context: input.userContext })
+    : undefined;
+  const driveAssets = selectedDriveAssets;''', 'create project music')
+s = exact(s, '''  const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : [];''', '''  const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]).filter((asset) => !asset.mimeType.startsWith("audio/")) : [];''', 'revision sanitize legacy audio')
+s = sub(s, r'''  const \[articles, references, history, latest, musicCatalog\] = await Promise\.all\(\[.*?\n  \]\);
+  if \(latest\.error\)''', '''  const [articles, references, history, latest] = await Promise.all([
+    loadArticles(articleIds),
+    getReferences(referenceIds),
+    historicalInstagramGuidance(),
+    admin.from("content_versions").select("version_number").eq("project_id", projectId).order("version_number", { ascending: false }).limit(1).single()
+  ]);
+  if (latest.error)''', 'revision promise')
+s = sub(s, r'''  const reelPlan = revised\.contentType === "reel"\n    \? reusableReelPlan\(baseStructured\) \?\? await analyzeAndPlanReel\(driveAssets, references, \{ musicCandidates: musicCatalog, context: `\$\{String\(project\.user_context \?\? ""\)\}\\nRevisão: \$\{changeRequest\}` \}\)\n    : undefined;\n  const selectedMusic = .*?\n  const effectiveDriveAssets = .*?;''', '''  const reelPlan = revised.contentType === "reel"
+    ? reusableReelPlan(baseStructured) ?? await analyzeAndPlanReel(driveAssets, references, { context: `${String(project.user_context ?? "")}\nRevisão: ${changeRequest}` })
+    : undefined;''', 'revision music')
+s = s.replace('compileStudioArtifact(revised, { driveAssets: effectiveDriveAssets, reelPlan,', 'compileStudioArtifact(revised, { driveAssets, reelPlan,')
+s = s.replace('drive_assets: effectiveDriveAssets, last_error: null', 'drive_assets: driveAssets, last_error: null')
+s = exact(s, '''  let driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : [];''', '''  let driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]).filter((asset) => !asset.mimeType.startsWith("audio/")) : [];''', 'queue sanitize legacy audio')
+s = sub(s, r'''    const musicCatalog = parsed\.contentType === "reel"\n      \? await listDriveMedia\(\).*?\n      : \[\];\n    const reelPlan = parsed\.contentType === "reel" \? await analyzeAndPlanReel\(driveAssets, references, \{ musicCandidates: musicCatalog \}\) : undefined;\n    const selectedMusic = .*?\n    if \(selectedMusic.*?\n''', '''    const reelPlan = parsed.contentType === "reel" ? await analyzeAndPlanReel(driveAssets, references) : undefined;
+''', 'queue music catalog')
+path.write_text(s)
+
+# Studio UI copy.
+path = Path("components/ContentStudio.tsx")
+s = path.read_text()
+s = s.replace('A IA escolhe automaticamente a trilha entre os áudios autorizados disponíveis no Drive, analisa BPM/beats e usa isso para montar os cortes.', 'A IA escolhe livremente a trilha musical fora do Drive, define o trecho/BPM e usa essa direção para montar os cortes.')
+s = s.replace('trilha escolhida pela IA` : "imagens"', 'trilha escolhida livremente pela IA` : "imagens"')
+path.write_text(s)
+
+# Structured artifact/timeline carries an external music cue.
+path = Path("lib/studio-artifact.ts")
+s = path.read_text()
+s = exact(s, 'import { buildReelEditingPlan, type FootageAnalysis, type ReelEditingPlan } from "@/lib/studio-reel-analysis";', 'import { buildReelEditingPlan, type FootageAnalysis, type MusicDirection, type ReelEditingPlan } from "@/lib/studio-reel-analysis";', 'artifact music type import')
+s = exact(s, '''  volume?: number;
+  muted?: boolean;''', '''  volume?: number;
+  muted?: boolean;
+  musicDirection?: MusicDirection;''', 'track external music field')
+s = exact(s, '  schemaVersion: 1 | 2 | 3;', '  schemaVersion: 1 | 2 | 3 | 4;', 'timeline schema union')
+s = exact(s, '''      muted: image ? true : Boolean(plan.musicAssetId),
+      volume: image || plan.musicAssetId ? 0 : .72''', '''      muted: image ? true : Boolean(plan.musicAssetId),
+      volume: image || plan.musicAssetId ? 0 : plan.musicDirection ? .18 : .72''', 'source audio under music direction')
+s = exact(s, '''  if (plan.musicAssetId) {
+    tracks.push({ id: "audio-music", name: `A1 · Música · ${byId.get(plan.musicAssetId)?.name ?? plan.musicAssetId}`, kind: "audio", role: "music", startFrame: 0, durationInFrames, sourceStartFrame: 0, zIndex: -10, editable: true, assetId: plan.musicAssetId, volume: .6 });
+  }''', '''  if (plan.musicDirection) {
+    tracks.push({ id: "audio-music", name: `A1 · Música · ${plan.musicDirection.artist} — ${plan.musicDirection.title}`, kind: "audio", role: "music", startFrame: 0, durationInFrames, sourceStartFrame: Math.max(0, Math.round(plan.musicDirection.startOffsetSeconds * fps)), zIndex: -10, editable: true, musicDirection: plan.musicDirection, volume: .65 });
+  } else if (plan.musicAssetId) {
+    tracks.push({ id: "audio-music", name: `A1 · Música legada · ${byId.get(plan.musicAssetId)?.name ?? plan.musicAssetId}`, kind: "audio", role: "music", startFrame: 0, durationInFrames, sourceStartFrame: 0, zIndex: -10, editable: true, assetId: plan.musicAssetId, volume: .6 });
+  }''', 'timeline music cue')
+s = exact(s, '''  const audioLabel = plan.musicAssetId ? `música escolhida pela IA e analisada${plan.musicSelectionReason ? ` (${plan.musicSelectionReason})` : ""}` : "áudio natural dos takes; nenhuma faixa autorizada ficou disponível para seleção automática";''', '''  const audioLabel = plan.musicDirection
+    ? `trilha escolhida livremente pela IA: ${plan.musicDirection.artist} — ${plan.musicDirection.title}, ${plan.musicDirection.bpm} BPM, trecho ${plan.musicDirection.section}`
+    : plan.musicAssetId
+      ? `música legada baseada em asset local${plan.musicSelectionReason ? ` (${plan.musicSelectionReason})` : ""}`
+      : "áudio natural dos takes";''', 'execution music label')
+s = exact(s, '    schemaVersion: 3,', '    schemaVersion: 4,', 'timeline schema v4')
+s = exact(s, '''  const dedicatedMusicIsReal = !plan.musicAssetId || (plan.beatSource === "music" && plan.musicAnalysis?.assetId === plan.musicAssetId && plan.musicAnalysis.beatSeconds.length >= 3);''', '''  const dedicatedMusicTimingOk = plan.musicDirection
+    ? plan.beatSource === "music" && plan.musicAnalysis?.analysisMode === "ai-estimated" && plan.musicAnalysis.beatSeconds.length >= 3 && Math.abs((plan.musicAnalysis.bpm ?? 0) - plan.musicDirection.bpm) < .01
+    : !plan.musicAssetId || (plan.beatSource === "music" && plan.musicAnalysis?.assetId === plan.musicAssetId && plan.musicAnalysis.beatSeconds.length >= 3);''', 'music timing QA')
+s = exact(s, '''  const sourceAudioAvailable = Boolean(plan.musicAssetId) || plan.sourceAudio;''', '''  const sourceAudioAvailable = Boolean(plan.musicDirection || plan.musicAssetId) || plan.sourceAudio;''', 'audio availability QA')
+s = exact(s, '''    { id: "audio", label: "Reel possui áudio", passed: sourceAudioAvailable, severity: "error", detail: plan.musicAssetId ? "Track de música dedicada." : "Áudio natural dos takes permanece ativo; ele não é tratado como se estivesse sincronizado aos beats da referência." },
+    { id: "music-beats", label: "Música dedicada foi analisada de verdade", passed: dedicatedMusicIsReal, severity: "error", detail: plan.musicAssetId ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats detectados na faixa selecionada; fonte=${plan.beatSource}.` : "Sem música dedicada; beat-alignment é desativado para não gerar falso positivo com o áudio dos takes." },''', '''    { id: "audio", label: "Reel possui direção de áudio", passed: sourceAudioAvailable, severity: "error", detail: plan.musicDirection ? `IA escolheu ${plan.musicDirection.artist} — ${plan.musicDirection.title}; o arquivo deve ser resolvido em catálogo licenciado na etapa de publicação/edição final.` : plan.musicAssetId ? "Track musical legada baseada em asset." : "Áudio natural dos takes permanece ativo." },
+    { id: "music-beats", label: "Ritmo da trilha foi definido para a montagem", passed: dedicatedMusicTimingOk, severity: "error", detail: plan.musicDirection ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats estimados a partir de ${plan.musicDirection.bpm} BPM para dirigir os cortes; a waveform real será validada quando a faixa licenciada for resolvida.` : plan.musicAssetId ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats detectados na faixa legada; fonte=${plan.beatSource}.` : "Sem música dedicada; beat-alignment é desativado." },''', 'audio QA checks')
+path.write_text(s)
+
+# Renderer: no Drive music; external cue does not pretend to be an embedded file.
+path = Path("lib/studio-reel-render.ts")
+s = path.read_text()
+s = exact(s, '''  const music = timeline.tracks.find((track) => track.role === "music" && track.assetId);
+  let musicInput: number | null = null;''', '''  const music = timeline.tracks.find((track) => track.role === "music" && track.assetId);
+  const externalMusic = timeline.tracks.find((track) => track.role === "music" && track.musicDirection);
+  let musicInput: number | null = null;''', 'renderer external cue')
+s = sub(s, r'''    const audioFlags = await Promise\.all\(footage\.map\(\(track\) => track\.kind === "image" \? Promise\.resolve\(false\) : hasAudio\(local\.get\(track\.assetId!\)!\)\)\);\n    if \(!audioFlags\.some\(Boolean\)\) \{\n      throw new Error\("Os visuais selecionados não fornecem áudio e a IA não encontrou uma trilha autorizada disponível no Drive para este Reel\."\);\n    \}\n    footage\.forEach\(\(track, index\) => \{.*?\n    if \(footage\.length === 1\) filters\.push\("\[shota0\]anull\[aout\]"\);\n    else filters\.push\(`\$\{footage\.map\(\(_, index\) => `\[shota\$\{index\}\]`\)\.join\(""\)\}concat=n=\$\{footage\.length\}:v=0:a=1\[aout\]`\);''', '''    const audioFlags = await Promise.all(footage.map((track) => track.kind === "image" ? Promise.resolve(false) : hasAudio(local.get(track.assetId!)!)));
+    if (!audioFlags.some(Boolean)) {
+      if (!externalMusic?.musicDirection) throw new Error("Os visuais selecionados não fornecem áudio e não existe direção musical no plano do Reel.");
+      console.warn("[reel-render] AI-selected external music is not embedded without a licensed media source", {
+        title: externalMusic.musicDirection.title,
+        artist: externalMusic.musicDirection.artist,
+        searchQuery: externalMusic.musicDirection.searchQuery
+      });
+      filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${total.toFixed(4)},asetpts=PTS-STARTPTS[aout]`);
+    } else {
+      footage.forEach((track, index) => {
+        const shotDuration = track.durationInFrames / timeline.fps;
+        const sourceStart = (track.sourceStartFrame ?? 0) / timeline.fps;
+        const sourceEnd = sourceStart + shotDuration;
+        if (audioFlags[index]) {
+          filters.push(`[${mediaInputIndices[index]}:a]atrim=start=${sourceStart.toFixed(4)}:end=${sourceEnd.toFixed(4)},asetpts=PTS-STARTPTS,aresample=48000,volume=${(track.volume ?? .72).toFixed(3)}[shota${index}]`);
+        } else {
+          filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${shotDuration.toFixed(4)},asetpts=PTS-STARTPTS[shota${index}]`);
+        }
+      });
+      if (footage.length === 1) filters.push("[shota0]anull[aout]");
+      else filters.push(`${footage.map((_, index) => `[shota${index}]`).join("")}concat=n=${footage.length}:v=0:a=1[aout]`);
+    }''', 'renderer audio fallback')
+path.write_text(s)
+
+# DaVinci export: preserve chosen song as an external relinkable cue.
+path = Path("lib/studio-davinci-export.ts")
+s = path.read_text()
+s = exact(s, '''        transitionDurationInFrames: track.transitionDurationInFrames ?? 0,
+        volume: track.volume ?? null''', '''        transitionDurationInFrames: track.transitionDurationInFrames ?? 0,
+        volume: track.volume ?? null,
+        musicDirection: track.musicDirection ?? null''', 'otio clip music metadata')
+s = exact(s, '''      : missingReference({ generatedLayer: true, role: track.role, figmaNodeId: track.figmaNodeId ?? null, text: track.text ?? null })''', '''      : missingReference({ generatedLayer: true, role: track.role, figmaNodeId: track.figmaNodeId ?? null, text: track.text ?? null, musicDirection: track.musicDirection ?? null })''', 'missing music reference')
+s = exact(s, '''        mode: input.payload.artifact.reelPlan.musicSelectionMode ?? "none",
+        assetId: input.payload.artifact.reelPlan.musicAssetId ?? null,
+        reason: input.payload.artifact.reelPlan.musicSelectionReason ?? null,
+        beatSource: input.payload.artifact.reelPlan.beatSource''', '''        mode: input.payload.artifact.reelPlan.musicSelectionMode ?? "none",
+        assetId: input.payload.artifact.reelPlan.musicAssetId ?? null,
+        direction: input.payload.artifact.reelPlan.musicDirection ?? null,
+        reason: input.payload.artifact.reelPlan.musicSelectionReason ?? null,
+        beatSource: input.payload.artifact.reelPlan.beatSource''', 'manifest music direction')
+s = s.replace('music: "Music remains an independent audio track and retains the AI selection rationale/beat metadata."', 'music: "AI chooses the song independently of Drive. The timeline carries title/artist/section/BPM/search metadata as an external music cue; relink the licensed source in Resolve or apply it in the publishing catalog."')
+s = s.replace('print("[Inteli Academy] Cuts, música e gráficos permanecem separados. Metadata Academy preserva transições e bindings do Figma.")', 'print("[Inteli Academy] Cuts, direção musical e gráficos permanecem separados. Se a música foi escolhida fora do Drive, relink a faixa licenciada indicada no manifest.")')
+s = s.replace('- música é uma faixa de áudio independente, escolhida/analisada pela IA;', '- a IA escolhe livremente a música; título, artista, trecho, BPM e busca ficam no manifest/track para relink em um catálogo licenciado;')
+path.write_text(s)
+
+# Render gate: v4 guarantees open-catalog AI music direction.
+path = Path("app/api/studio/[projectId]/versions/[versionId]/render-reel/route.ts")
+s = path.read_text()
+s = s.replace('(plan.analysisSummary?.semanticVersion ?? 0) < 3', '(plan.analysisSummary?.semanticVersion ?? 0) < 4')
+s = s.replace('(plan.reference.semanticVersion ?? 0) < 3', '(plan.reference.semanticVersion ?? 0) < 4')
+anchor = '''  if (plan.reference && (plan.reference.semanticVersion ?? 0) < 4) {
+    throw new Error("A referência desta versão ainda não possui análise semântica atual.");
+  }
+'''
+if anchor not in s:
+    raise SystemExit('missing render gate anchor')
+s = s.replace(anchor, anchor + '''  if (plan.musicSelectionMode !== "ai-open-catalog" || !plan.musicDirection?.title || !plan.musicDirection?.artist) {
+    throw new Error("Esta versão ainda depende de uma seleção musical legada. Reanalise ou revise a versão para a IA escolher livremente a trilha.");
+  }
+''', 1)
+path.write_text(s)
+
+forbidden = {
+    'lib/studio-reel-analysis.ts': ['musicCandidates', 'chooseAutomaticMusic', 'analyzeMusicAsset', 'catálogo do Google Drive'],
+    'lib/studio.ts': ['musicCandidates: musicCatalog', 'selectedMusic = reelPlan?.musicAssetId'],
+    'components/ContentStudio.tsx': ['áudios autorizados disponíveis no Drive']
+}
+for file, needles in forbidden.items():
+    text = Path(file).read_text()
+    for needle in needles:
+        if needle in text:
+            raise SystemExit(f'forbidden legacy music dependency remains in {file}: {needle}')
+
+Path('.github/open-music-patch.py').unlink()
+Path('.github/workflows/apply-open-music-selection.yml').unlink()
