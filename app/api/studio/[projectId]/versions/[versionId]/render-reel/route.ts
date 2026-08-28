@@ -10,11 +10,14 @@ export const maxDuration = 300;
 
 function assertCurrentVisualPlan(payload: StructuredStudioPayload) {
   const plan = payload.artifact?.reelPlan;
-  if (!plan || (plan.analysisSummary?.semanticVersion ?? 0) < 3) {
+  if (!plan || (plan.analysisSummary?.semanticVersion ?? 0) < 4) {
     throw new Error("Esta versão usa uma análise de Reel legada. Reanalise ou revise a versão antes de renderizar.");
   }
-  if (plan.reference && (plan.reference.semanticVersion ?? 0) < 3) {
+  if (plan.reference && (plan.reference.semanticVersion ?? 0) < 4) {
     throw new Error("A referência desta versão ainda não possui análise semântica atual.");
+  }
+  if (plan.musicSelectionMode !== "ai-open-catalog" || !plan.musicDirection?.title || !plan.musicDirection?.artist) {
+    throw new Error("Esta versão ainda depende de uma seleção musical legada. Reanalise ou revise a versão para a IA escolher livremente a trilha.");
   }
   const byAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
   if (plan.shots.some((shot) => byAsset.get(shot.assetId)?.analysisMode === "metadata-fallback")) {
