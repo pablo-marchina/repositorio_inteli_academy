@@ -18,14 +18,29 @@ export function StudioVideoPreview({ payload, timeline, driveAssets, figmaLayout
   initialRenderQa?: StudioBrandReport;
   initialRenderedReel?: StudioRenderedReel;
 }) {
+  void driveAssets;
   const router = useRouter();
   const usedIds = [...new Set(timeline.tracks.flatMap((track) => track.assetId ? [track.assetId] : []))];
-  const assetById = new Map(driveAssets.map((asset) => [asset.id, asset]));
-  const assetUrls = Object.fromEntries(usedIds.map((id) => {
-    const asset = assetById.get(id);
-    const browserQuery = asset?.mimeType.startsWith("video/") ? "?browser=1" : "";
-    return [id, `/api/drive/preview/${encodeURIComponent(id)}${browserQuery}`];
-  }));
+  const assetUrls: Record<string, string> = Object.fromEntries(
+    usedIds.map((id) => [id, `/api/drive/preview/${encodeURIComponent(id)}`])
+  );
+
+  // The editable player only needs the exact source slice used by each shot. Point each
+  // footage track at a tiny browser-safe segment instead of transcoding the full Drive file.
+  // Track IDs intentionally override asset IDs in AcademyVideoComposition, so the same source
+  // asset can be reused with different in/out points without corrupting preview timing.
+  for (const track of timeline.tracks) {
+    if (track.role !== "footage" || track.kind !== "video" || !track.assetId) continue;
+    const sourceStartSeconds = Math.max(0, (track.sourceStartFrame ?? 0) / timeline.fps);
+    const shotDurationSeconds = Math.max(0.1, track.durationInFrames / timeline.fps);
+    const query = new URLSearchParams({
+      browser: "1",
+      start: sourceStartSeconds.toFixed(3),
+      duration: shotDurationSeconds.toFixed(3)
+    });
+    assetUrls[track.id] = `/api/drive/preview/${encodeURIComponent(track.assetId)}?${query.toString()}`;
+  }
+
   const roleUrls = (role: string) => !figmaLayout || !projectId || !versionId ? [] : (figmaLayout.roles?.[role] ?? []).map((_, index) => `/api/studio/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}/figma-layer?role=${encodeURIComponent(role)}&index=${index}`);
   const brandLayerUrls = { background: roleUrls("background"), decoration: roleUrls("decoration"), logo: roleUrls("logo"), eyebrow: roleUrls("eyebrow"), headline: roleUrls("headline"), body: roleUrls("body") };
   const startedRef = useRef(false);
@@ -70,7 +85,7 @@ export function StudioVideoPreview({ payload, timeline, driveAssets, figmaLayout
       <div style={{ maxWidth: 360, width: "100%", overflow: "hidden", borderRadius: 18, background: "#0a0a0a" }}>
         <Player component={AcademyVideoComposition} inputProps={{ payload, timeline, assetUrls, figmaLayout, brandLayerUrls }} durationInFrames={timeline.durationInFrames} compositionWidth={timeline.width} compositionHeight={timeline.height} fps={timeline.fps} controls style={{ width: "100%", aspectRatio: `${timeline.width}/${timeline.height}` }} />
       </div>
-      <span style={{ fontSize: 12, opacity: .62 }}>O preview usa proxies H.264/AAC compatíveis com navegador; o render/export continua usando os arquivos originais do Drive.</span>
+      <span style={{ fontSize: 12, opacity: .62 }}>O preview usa apenas o trecho exato de cada shot em proxy H.264 leve; timing, ordem, crop e elementos da timeline continuam fiéis à edição. Render/export usam os originais do Drive.</span>
     </div>
 
     {!figmaLayout ? <div style={{ fontSize: 13, padding: "10px 12px", border: "1px solid rgba(240,180,60,.35)", borderRadius: 10 }}><strong>Preview pré-Figma.</strong> Montagem, crop e timing são reais, mas a marca só é validada após sincronizar o frame no Figma.</div> : null}
