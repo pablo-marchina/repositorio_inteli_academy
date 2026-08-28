@@ -1,4 +1,5 @@
 import { apiAdmin } from "@/lib/api-auth";
+import { installGeminiMediaFetchGuard } from "@/lib/gemini-media-fetch-guard";
 import { createStudioProject, syncInstagramReferences } from "@/lib/studio";
 import { updateStudioPartnerBrand } from "@/lib/studio-brand-assets";
 
@@ -8,6 +9,10 @@ export async function POST(request: Request) {
   const auth = await apiAdmin();
   if (!auth) return Response.json({ error: "Não autorizado." }, { status: 401 });
   try {
+    // Keep multimodal analysis bounded. Slow or structurally invalid visual
+    // Gemini responses fall through to the deterministic local Reel analysis.
+    installGeminiMediaFetchGuard();
+
     // Real @inteli.academy history is a required generation reference, not an optional fallback.
     await syncInstagramReferences();
     const raw = await request.json() as Record<string, unknown>;
