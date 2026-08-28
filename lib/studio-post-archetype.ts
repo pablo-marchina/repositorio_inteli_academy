@@ -4,16 +4,21 @@ function normalized(value: string) {
   return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+/**
+ * Compatibility-only inference for versions created before postArchetype became
+ * explicit. Rules describe editorial intent, never a company, campaign,
+ * technology, metric or historical post.
+ */
 const ARCHETYPE_RULES: Array<[StudioPostArchetype, RegExp]> = [
-  ["partnership", /\b(parceria|parceiro|partner|collab)\b/],
-  ["event-recap", /\b(visita|evento|retrospectiva|workshop|hackathon|meetup|demo\s*day)\b/],
-  ["case", /\b(case|projeto com|projeto para)\b/],
-  ["results", /\b(resultado|impacto|nps|metric|numero|dados)\b/],
-  ["announcement", /\b(novidade|anuncio|nova gestao|lancamento)\b/],
-  ["educational", /\b(aula|conceito|tutorial|aprenda|entenda|llm|rag|ia aplicada)\b/],
+  ["partnership", /\b(parceria|parceiro|partner|collab|colaboracao)\b/],
+  ["event-recap", /\b(visita|evento|retrospectiva|workshop|encontro|conferencia|palestra|painel)\b/],
+  ["case", /\b(case|estudo de caso|projeto com|projeto para)\b/],
+  ["results", /\b(resultado|impacto|metrica|indicador|numero|dados)\b/],
+  ["announcement", /\b(novidade|anuncio|comunicado|lancamento)\b/],
+  ["educational", /\b(aula|conceito|tutorial|guia|aprenda|entenda|explicacao|como fazer)\b/],
   ["people", /\b(equipe|diretoria|membros|pessoas|time)\b/],
-  ["quote", /\b(frase|citacao|quote)\b/],
-  ["cta", /\b(inscreva|participe|agenda|obrigado|saiba mais)\b/]
+  ["quote", /\b(frase|citacao|quote|depoimento)\b/],
+  ["cta", /\b(inscreva|participe|contato|obrigado|saiba mais|chamada)\b/]
 ];
 
 export function effectivePostArchetype(payload: Pick<StudioPayload, "postArchetype" | "title" | "caption">): StudioPostArchetype {
@@ -27,13 +32,20 @@ function cleanPartner(value: string | undefined) {
   return cleaned && cleaned.length <= 100 ? cleaned : undefined;
 }
 
+/**
+ * Legacy partner extraction is deliberately syntax-based: it captures whatever
+ * organization followed a generic relationship phrase instead of maintaining
+ * a list of known companies.
+ */
 export function inferLegacyPartnerName(payload: Pick<StudioPayload, "title" | "caption">) {
   const title = payload.title.trim();
   const patterns = [
     /\bvisita\s+(?:ao|a|à)\s+(.+)$/i,
     /\bparceria\s+(?:com\s+)?(.+)$/i,
     /\bcase\s+(?:com|para|da|do)?\s*:?-?\s*(.+)$/i,
-    /\bworkshop\s+(?:com|na|no)\s+(.+)$/i
+    /\bworkshop\s+(?:com|na|no)\s+(.+)$/i,
+    /\bprojeto\s+(?:com|para)\s+(.+)$/i,
+    /\bevento\s+(?:com|na|no)\s+(.+)$/i
   ];
   for (const pattern of patterns) {
     const match = title.match(pattern);
