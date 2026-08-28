@@ -18,6 +18,19 @@ function Score({ title, report }: { title: string; report: StudioBrandReport }) 
   </div>;
 }
 
+function BrandStatus({ payload }: { payload: StructuredStudioPayload }) {
+  const archetype = payload.postArchetype ?? "general";
+  const brand = payload.brandContext;
+  const partner = brand?.partnerName;
+  const partnerStatus = brand?.partnerLogoStatus ?? (partner ? "missing" : "not-required");
+  return <div style={{ border: "1px solid rgba(127,127,127,.2)", borderRadius: 12, padding: 12, fontSize: 13, display: "flex", gap: 18, flexWrap: "wrap" }}>
+    <span><strong>Arquétipo:</strong> {archetype}</span>
+    <span><strong>Marca principal:</strong> {brand?.primaryBrandName ?? "Inteli Academy"}</span>
+    {partner ? <span><strong>Parceiro:</strong> {partner}</span> : null}
+    <span><strong>Logo do parceiro:</strong> {partnerStatus === "ready" ? "resolvida" : partnerStatus === "missing" ? "pendente — aprovação bloqueada" : "não necessária"}</span>
+  </div>;
+}
+
 export function StructuredStudioPanel({ projectId, driveAssets, versions, initialVersionId, referenceMediaUrl }: { projectId: string; driveAssets: DriveAsset[]; versions: StructuredVersion[]; initialVersionId?: string | null; referenceMediaUrl?: string | null }) {
   const candidates = versions.filter((version) => Boolean(version.payload.artifact));
   const [versionId, setVersionId] = useState(initialVersionId && candidates.some((version) => version.id === initialVersionId) ? initialVersionId : candidates[0]?.id ?? "");
@@ -33,14 +46,15 @@ export function StructuredStudioPanel({ projectId, driveAssets, versions, initia
       <div><span className="eyebrow">Structured Design</span><h2 style={{ marginTop: 6 }}>Fidelidade + editabilidade</h2></div>
       <label style={{ display: "flex", alignItems: "center", gap: 8 }}>Versão <select value={selected.id} onChange={(event) => setVersionId(event.target.value)}>{candidates.map((version) => <option key={version.id} value={version.id}>V{version.version_number} · {version.status}</option>)}</select></label>
     </div>
-    <p>Scene Graph canônico + Figma como fonte visual. Para Reels, timeline, MP4 final e QA visual são gates independentes.</p>
-    <div style={{ display: "grid", gap: 12 }}>
+    <p>Scene Graph canônico + Figma como fonte visual. Arquétipo editorial, estrutura da referência e identidade de marca são avaliados separadamente; para Reels, timeline, MP4 final e QA visual também são gates independentes.</p>
+    <BrandStatus payload={selected.payload} />
+    <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
       <Score title="Brand linter estrutural" report={artifact.brandAudit} />
       {artifact.reelQuality ? <Score title="QA de timeline executável" report={artifact.reelQuality} /> : null}
       {artifact.visualBrandReview ? <Score title="Crítico visual · template Figma × resultado" report={artifact.visualBrandReview} /> : null}
       {artifact.renderQa ? <Score title="Crítico visual · MP4 final" report={artifact.renderQa} /> : null}
     </div>
-    <div style={{ marginTop: 14, fontSize: 13, opacity: .78 }}><strong>Origem dos frames:</strong> {artifact.sceneGraph.frames.map((frame) => frame.sourceFigmaFrameId ? `base humana ${frame.sourceFigmaFrameId}` : frame.figmaTemplateNodeId ? `template ${frame.figmaTemplateNodeId}` : frame.preferredTemplateNames[0]).join(" · ")}</div>
+    <div style={{ marginTop: 14, fontSize: 13, opacity: .78 }}><strong>Origem dos frames:</strong> {artifact.sceneGraph.frames.map((frame) => frame.sourceFigmaFrameId ? `base humana ${frame.sourceFigmaFrameId}` : frame.figmaTemplateNodeId ? `template descoberto ${frame.figmaTemplateNodeId}` : `resolver: ${frame.preferredTemplateNames[0]}`).join(" · ")}</div>
     {artifact.videoTimeline ? <div style={{ marginTop: 22, display: "grid", gap: 14 }}>
       <div><h3>Timeline de vídeo editável</h3><p>Footage, áudio, texto e gráficos são tracks independentes. A revisão visual mostra a referência ao lado de um MP4 técnico único da timeline; após o Figma, o servidor codifica o MP4 final e executa o QA.</p></div>
       <StudioVideoPreview payload={selected.payload} timeline={artifact.videoTimeline} driveAssets={driveAssets} figmaLayout={artifact.figmaVideoLayout} projectId={projectId} versionId={selected.id} referenceMediaUrl={referenceMediaUrl} initialRenderQa={artifact.renderQa} initialRenderedReel={artifact.renderedReel} />
@@ -49,7 +63,7 @@ export function StructuredStudioPanel({ projectId, driveAssets, versions, initia
         <a className={styles.secondary} href={`${exportBase}?format=otio`}>Baixar OTIO</a>
         <a className={styles.secondary} href={`${exportBase}?format=manifest`}>Baixar manifest</a>
       </div>
-      {!selected.figma_frame_ids.length ? <p style={{ fontSize: 13, opacity: .72 }}>O render final, o export nativo e o QA visual aparecem depois que a versão passa pelo Figma.</p> : null}
+      {!selected.figma_frame_ids.length ? <p style={{ fontSize: 13, opacity: .72 }}>O render final, as logos resolvidas e o QA visual completo aparecem depois que a versão passa pelo Figma.</p> : null}
     </div> : null}
   </section>;
 }
