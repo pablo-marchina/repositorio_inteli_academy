@@ -21,7 +21,7 @@ type Reference = {
 const formats: Array<{ id: StudioContentType; title: string; description: string }> = [
   { id: "single", title: "Post único", description: "Uma peça 1080×1350 para o feed." },
   { id: "carousel", title: "Carrossel", description: "De 2 a 10 peças com progressão narrativa." },
-  { id: "reel", title: "Reel", description: "6–12 cortes a partir dos vídeos selecionados + trilha opcional + direção Figma." },
+  { id: "reel", title: "Reel", description: "Montagem com vídeos e fotos; duração, densidade e quantidade de cortes seguem a referência selecionada." },
   { id: "story", title: "Story", description: "Uma peça vertical 1080×1920." }
 ];
 
@@ -48,11 +48,15 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
   }, [articles, query]);
 
   const compatibleAssets = useMemo(
-    () => driveAssets.filter((asset) => contentType === "reel" ? asset.mimeType.startsWith("video/") || asset.mimeType.startsWith("audio/") : asset.mimeType.startsWith("image/")),
+    () => driveAssets.filter((asset) => contentType === "reel"
+      ? asset.mimeType.startsWith("video/") || asset.mimeType.startsWith("image/") || asset.mimeType.startsWith("audio/")
+      : asset.mimeType.startsWith("image/")),
     [driveAssets, contentType]
   );
 
   const selectedVideoCount = selectedAssets.filter((id) => driveAssets.find((asset) => asset.id === id)?.mimeType.startsWith("video/")).length;
+  const selectedImageCount = selectedAssets.filter((id) => driveAssets.find((asset) => asset.id === id)?.mimeType.startsWith("image/")).length;
+  const selectedVisualCount = selectedVideoCount + selectedImageCount;
   const selectedAudio = selectedAssets.map((id) => driveAssets.find((asset) => asset.id === id)).find((asset) => asset?.mimeType.startsWith("audio/"));
 
   function toggleArticle(id: string) {
@@ -115,7 +119,8 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
   async function generate() {
     setError("");
     if (useDrive && !selectedAssets.length) return setError("O uso do Drive está habilitado; escolha pelo menos uma mídia.");
-    if (contentType === "reel" && !selectedVideoCount) return setError("Reel requer pelo menos um vídeo selecionado do Drive.");
+    if (contentType === "reel" && !selectedVisualCount) return setError("Reel requer pelo menos um vídeo ou uma imagem selecionada do Drive.");
+    if (contentType === "reel" && !selectedVideoCount && !selectedAudio) return setError("Um Reel composto somente por imagens precisa de uma faixa de áudio selecionada.");
     setGenerating(true);
     try {
       const response = await fetch("/api/studio/generate", {
@@ -165,7 +170,7 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
 
       <section className={styles.section}>
         <div className={styles.toolbar}>
-          <div><h2>4. Posts reais do Instagram como referência <small>(opcional)</small></h2><p>Ao escolher um Reel, o sistema tenta ler cortes, ritmo, motion e timing do vídeo real. Se essa análise falhar, a geração é interrompida em vez de fingir fidelidade.</p></div>
+          <div><h2>4. Posts reais do Instagram como referência <small>(opcional)</small></h2><p>Ao escolher um Reel, o sistema lê a duração, a quantidade de shots, os cortes, o ritmo, motion e timing do vídeo real. A montagem gerada segue essa estrutura temporal em vez de usar uma quantidade fixa de cortes.</p></div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}><span className={styles.count}>{selectedReferences.length}/{MAX_STUDIO_REFERENCES} selecionados</span><button className={styles.secondary} type="button" disabled={syncingInstagram} onClick={syncReferences}>{syncingInstagram ? "Sincronizando…" : "Sincronizar @inteli.academy"}</button></div>
         </div>
         <div className={styles.referenceGrid}>
@@ -182,18 +187,19 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       </section>
 
       <section className={styles.section}>
-        <div className={styles.toolbar}><div><h2>5. Mídia do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} mídias para ampliar o pool de montagem. Você pode selecionar também uma única faixa de áudio; sem faixa dedicada, o Reel mantém o áudio dos takes.` : `O sistema só pode usar os arquivos que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => enableDrive(event.target.checked)} /> Usar Drive</label></div>
+        <div className={styles.toolbar}><div><h2>5. Mídia do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} vídeos, fotos e uma faixa de áudio opcional. Todos os visuais selecionados entram no pool; a referência determina a quantidade e a cadência dos shots.` : `O sistema só pode usar os arquivos que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => enableDrive(event.target.checked)} /> Usar Drive</label></div>
         {!driveConnected ? <p><a href="/api/drive/connect">Conecte o Google Drive em Configurações</a> para habilitar a biblioteca.</p> : null}
         {loadingDrive ? <p>Carregando biblioteca de mídia…</p> : null}
         {useDrive && !loadingDrive ? <>
-          <span className={styles.count}>{selectedAssets.length}/{MAX_STUDIO_DRIVE_ASSETS} selecionados · {contentType === "reel" ? `${selectedVideoCount} vídeo(s)${selectedAudio ? ` · trilha: ${selectedAudio.name}` : " · áudio dos takes"}` : "imagens"}</span>
+          <span className={styles.count}>{selectedAssets.length}/{MAX_STUDIO_DRIVE_ASSETS} selecionados · {contentType === "reel" ? `${selectedVideoCount} vídeo(s) · ${selectedImageCount} foto(s)${selectedAudio ? ` · trilha: ${selectedAudio.name}` : " · áudio dos takes"}` : "imagens"}</span>
           <div className={styles.mediaGrid}>{compatibleAssets.map((asset) => {
             const isVideo = asset.mimeType.startsWith("video/");
             const isAudio = asset.mimeType.startsWith("audio/");
+            const isImage = asset.mimeType.startsWith("image/");
             const duration = asset.durationMillis ? `${(asset.durationMillis / 1000).toFixed(1)}s` : "";
             return <button type="button" key={asset.id} className={`${styles.media} ${selectedAssets.includes(asset.id) ? styles.mediaActive : ""}`} onClick={() => toggleAsset(asset.id)}>
-              <div className={styles.mediaThumb} style={asset.mimeType.startsWith("image/") ? { backgroundImage: `url(/api/drive/preview/${encodeURIComponent(asset.id)})` } : undefined}>{isVideo ? "▶ vídeo" : isAudio ? "♪ áudio" : ""}</div>
-              <div className={styles.mediaBody}><strong title={asset.name}>{asset.name}</strong><span>{[asset.path?.join(" / ") || "raiz", duration].filter(Boolean).join(" · ")}</span></div>
+              <div className={styles.mediaThumb} style={isImage ? { backgroundImage: `url(/api/drive/preview/${encodeURIComponent(asset.id)})` } : undefined}>{isVideo ? "▶ vídeo" : isAudio ? "♪ áudio" : ""}</div>
+              <div className={styles.mediaBody}><strong title={asset.name}>{asset.name}</strong><span>{[asset.path?.join(" / ") || "raiz", isImage ? "foto" : duration].filter(Boolean).join(" · ")}</span></div>
             </button>;
           })}</div>
         </> : null}
