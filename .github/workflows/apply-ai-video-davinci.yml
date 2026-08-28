@@ -20,6 +20,10 @@ jobs:
         with:
           ref: feat/ai-video-editing-davinci
           fetch-depth: 0
+      - name: Verify staged patch parts
+        run: |
+          wc -c .github/ai-video-davinci.patch.gz.b64.*
+          git hash-object .github/ai-video-davinci.patch.gz.b64.*
       - name: Reassemble implementation patch
         run: |
           cat .github/ai-video-davinci.patch.gz.b64.* > /tmp/ai-video.patch.b64
