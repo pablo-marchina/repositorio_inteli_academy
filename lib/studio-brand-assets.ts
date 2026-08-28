@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { studioPayloadSchema } from "@/lib/studio-ai";
 import { effectivePostArchetype } from "@/lib/studio-post-archetype";
 import type { StructuredStudioPayload } from "@/lib/studio-artifact";
+import { clearRenderedReel } from "@/lib/studio-render-types";
 import type { StudioBrandContext, StudioPayload } from "@/lib/types";
 
 const brandInputSchema = z.object({
@@ -12,20 +13,20 @@ const brandInputSchema = z.object({
 });
 
 function invalidateBrandDependentArtifacts(payload: StructuredStudioPayload): StructuredStudioPayload {
-  if (!payload.artifact) return payload;
+  const clean = clearRenderedReel(payload) as StructuredStudioPayload;
+  if (!clean.artifact) return clean;
   return {
-    ...payload,
+    ...clean,
     artifact: {
-      ...payload.artifact,
+      ...clean.artifact,
       figmaVideoLayout: undefined,
       visualBrandReview: undefined,
       renderQa: undefined,
-      renderedReel: undefined,
       brandAudit: {
-        ...payload.artifact.brandAudit,
+        ...clean.artifact.brandAudit,
         passed: false,
         checks: [
-          ...payload.artifact.brandAudit.checks.filter((check) => check.id !== "partner-brand-resolution"),
+          ...clean.artifact.brandAudit.checks.filter((check) => check.id !== "partner-brand-resolution"),
           {
             id: "partner-brand-resolution",
             label: "Marca parceira precisa ser confirmada no Figma",
@@ -35,7 +36,7 @@ function invalidateBrandDependentArtifacts(payload: StructuredStudioPayload): St
           }
         ],
         issues: [
-          ...(payload.artifact.brandAudit.issues ?? []).filter((issue) => !/marca parceira foi alterada/i.test(issue)),
+          ...(clean.artifact.brandAudit.issues ?? []).filter((issue) => !/marca parceira foi alterada/i.test(issue)),
           "A marca parceira foi alterada; o Figma e o render final precisam ser atualizados."
         ]
       }
