@@ -2,15 +2,15 @@ figma.showUI(__html__, { width: 430, height: 620, themeColors: true });
 
 const SEMANTIC_PREFIX = "AI::";
 const ARCHETYPE_HINTS = {
-  partnership: ["parceria", "parceiro", "partner", "empresa"],
-  "event-recap": ["evento", "retrospectiva", "visita", "workshop", "hackathon"],
+  partnership: ["parceria", "parceiro", "partner", "collab"],
+  "event-recap": ["evento", "retrospectiva", "visita", "workshop", "encontro", "conferencia"],
   case: ["case", "projeto", "cliente"],
-  announcement: ["novidade", "nova", "anuncio", "gestao"],
-  educational: ["conceito", "aula", "llm", "tutorial", "explic"],
-  results: ["resultado", "impacto", "nps", "metric"],
-  people: ["diretoria", "pessoa", "membro", "equipe"],
-  quote: ["quote", "frase", "citacao"],
-  cta: ["obrigado", "fim", "agenda", "cta"],
+  announcement: ["novidade", "anuncio", "lancamento", "comunicado"],
+  educational: ["conceito", "aula", "tutorial", "guia", "explic", "aprenda"],
+  results: ["resultado", "impacto", "metrica", "dados", "indicador"],
+  people: ["diretoria", "pessoa", "membro", "equipe", "time"],
+  quote: ["quote", "frase", "citacao", "depoimento"],
+  cta: ["obrigado", "fim", "encerramento", "inscricao", "contato", "cta"],
   general: []
 };
 
@@ -145,7 +145,7 @@ function frameFeatureScore(frame, sceneFrame, studioFrame, payload) {
   if (studioFrame.template === "cover") score += largest * 2 - Math.max(0, texts.length - 8) * 12;
   if (studioFrame.template === "photo") score += images.length * 170;
   if (studioFrame.template === "stat" && texts.some((node) => /\d/.test(node.characters) && numericFontSize(node) > 60)) score += 260;
-  if (studioFrame.template === "cta" && /(fim|cta|academy week|obrigado)/.test(name)) score += 320;
+  if (studioFrame.template === "cta" && /(fim|cta|obrigado|encerramento|inscricao|contato)/.test(name)) score += 320;
   if (studioFrame.template === "editorial" && texts.length >= 3) score += 100;
   if (studioFrame.template === "quote" && texts.length >= 2 && texts.length <= 10) score += 80;
   if (archetype === "partnership" && images.length) score += 120;
@@ -203,13 +203,21 @@ function discoverAccent(source) {
   return ranked[0] || { r: 42 / 255, g: 0, b: 1 };
 }
 
+function ownedBrandNode(node) {
+  const role = taggedRole(node);
+  if (role === "primaryLogo" || role === "logo") return true;
+  const characters = node.type === "TEXT" ? node.characters : "";
+  const value = normalizedName(`${node.name || ""} ${characters}`);
+  if (/partner|parceir|cliente|empresa/.test(value)) return false;
+  if (/inteli academy/.test(value) || /(?:^|\s)academy(?:\s|$)/.test(value) || /(?:^|\s)ia(?:\s|$)/.test(value)) return true;
+  return /(?:inteli|academy).*(?:logo|marca|brand|mark|simbolo|symbol)|(?:logo|marca|brand|mark|simbolo|symbol).*(?:inteli|academy)/.test(value);
+}
+
 function primaryLogoNodes(source) {
   const tagged = source.findAll((node) => ["primaryLogo", "logo"].includes(taggedRole(node)));
   if (tagged.length) return tagged.slice(0, 4);
-  const academyText = textNodes(source).filter((node) => /inteli academy|^academy$|^ia$/i.test(node.characters.trim()));
-  if (academyText.length) return academyText.slice(0, 2);
-  const vectors = source.findAll((node) => node.type === "VECTOR" && /vector\s*(3|5)$/i.test(node.name || ""));
-  return vectors.slice(0, 2);
+  const candidates = source.findAll((node) => ownedBrandNode(node));
+  return candidates.slice(0, 4);
 }
 
 async function cloneTextStyle(source, target, value, role, box) {
@@ -345,10 +353,21 @@ async function replacePartnerLogo(frame, context) {
   if (!image) return null;
   let target = frame.findAll((node) => taggedRole(node) === "partnerLogo" && "fills" in node)[0];
   if (!target) {
-    const candidates = imageNodes(frame).filter((node) => taggedRole(node) !== "media");
-    target = candidates.sort((a, b) => (a.width * a.height) - (b.width * b.height))[0];
+    const named = frame.findAll((node) => {
+      const value = normalizedName(node.name || "");
+      return "fills" in node && /partner|parceir|cliente|co-brand|cobrand/.test(value) && /logo|marca|brand|mark/.test(value);
+    });
+    target = named[0];
   }
-  if (!target || !("fills" in target)) return null;
+  if (!target) {
+    const rect = figma.createRectangle();
+    rect.resize(Math.max(120, frame.width * .26), Math.max(64, frame.height * .07));
+    rect.x = frame.width - rect.width - frame.width * .06;
+    rect.y = frame.height - rect.height - frame.height * .06;
+    frame.appendChild(rect);
+    target = rect;
+  }
+  if (!("fills" in target)) return null;
   target.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FIT" }];
   tagNode(target, "partnerLogo");
   return target;
@@ -410,10 +429,7 @@ async function applySemanticContent(frame, studioFrame, sceneFrame, context) {
     if (existingMedia) tagNode(existingMedia, "media");
   }
 
-  const brandText = textNodes(frame).find((node) => /inteli academy|^ia$|^academy$/i.test(node.characters.trim()));
-  if (brandText) tagNode(brandText, "primaryLogo");
-  const logoVectors = frame.findAll((node) => node.type === "VECTOR" && /vector\s*(3|5)$/i.test(node.name || ""));
-  logoVectors.slice(0, 2).forEach((node) => tagNode(node, "primaryLogo"));
+  primaryLogoNodes(frame).forEach((node) => tagNode(node, "primaryLogo"));
   await replacePartnerLogo(frame, context);
   const pagination = textNodes(frame).find((node) => /^\d{1,2}\s*\/\s*\d{1,2}$/.test(node.characters.trim()));
   if (pagination) tagNode(pagination, "pagination");
