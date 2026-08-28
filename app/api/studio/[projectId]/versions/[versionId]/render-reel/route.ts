@@ -10,10 +10,10 @@ export const maxDuration = 300;
 
 function assertCurrentVisualPlan(payload: StructuredStudioPayload) {
   const plan = payload.artifact?.reelPlan;
-  if (!plan || (plan.analysisSummary?.semanticVersion ?? 0) < 4) {
+  if (!plan || (plan.analysisSummary?.semanticVersion ?? 0) < 5) {
     throw new Error("Esta versão usa uma análise de Reel legada. Reanalise ou revise a versão antes de renderizar.");
   }
-  if (plan.reference && (plan.reference.semanticVersion ?? 0) < 4) {
+  if (plan.reference && (plan.reference.semanticVersion ?? 0) < 5) {
     throw new Error("A referência desta versão ainda não possui análise semântica atual.");
   }
   if (plan.musicSelectionMode !== "ai-open-catalog" || !plan.musicDirection?.title || !plan.musicDirection?.artist) {

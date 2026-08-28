@@ -40,6 +40,7 @@ export function serializeOtio(input: {
           transitionDurationInFrames: track.transitionDurationInFrames ?? 0,
           volume: track.volume ?? null,
           muted: track.muted ?? null,
+          sourceAudioAnalysis: track.sourceAudioAnalysis ?? null,
           musicDirection: track.musicDirection ?? null
         }
       },

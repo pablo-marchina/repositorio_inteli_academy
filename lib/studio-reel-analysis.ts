@@ -16,7 +16,7 @@ const MAX_MEDIA_DOWNLOAD_BYTES = 120_000_000;
 const TARGET_VIDEO_ANALYSIS_BYTES = 10_000_000;
 const MAX_REFERENCE_SHOTS = 40;
 const STILL_ANALYSIS_DURATION_SECONDS = 180;
-const SEMANTIC_ANALYSIS_VERSION = 4;
+const SEMANTIC_ANALYSIS_VERSION = 5;
 
 export type ReelShotType = "establishing" | "speaker" | "interaction" | "audience" | "detail" | "brand" | "movement" | "closing" | "other";
 export type ReelFraming = "wide" | "medium" | "close" | "detail" | "other";
@@ -49,6 +49,23 @@ export type ReelReferenceTemporalAnalysis = {
   textCues: Array<{ startSeconds: number; endSeconds: number; density: "light" | "medium" | "heavy"; placement: string }>;
 };
 
+export type SourceAudioAnalysis = {
+  hasAudio: boolean;
+  speechPresent: boolean;
+  speechIntelligible: boolean;
+  ambientUseful: boolean;
+  summary: string;
+  recommendedVolume: number;
+  duckMusic: boolean;
+  segments: Array<{
+    startSeconds: number;
+    endSeconds: number;
+    kind: "speech" | "reaction" | "ambient" | "silence" | "other";
+    priority: "keep" | "optional" | "mute";
+    reason: string;
+  }>;
+};
+
 export type FootageAnalysis = {
   assetId: string;
   durationSeconds: number;
@@ -56,6 +73,7 @@ export type FootageAnalysis = {
   height: number | null;
   analysisMode: "video" | "image" | "local-video" | "metadata-fallback";
   cameraMovement: string;
+  sourceAudio?: SourceAudioAnalysis;
   bestSegments: Array<SemanticShot & {
     startSeconds: number;
     endSeconds: number;
@@ -158,8 +176,26 @@ const temporalSchema = z.object({
   })).max(80).default([])
 });
 
+const sourceAudioSchema = z.object({
+  hasAudio: z.boolean(),
+  speechPresent: z.boolean(),
+  speechIntelligible: z.boolean(),
+  ambientUseful: z.boolean(),
+  summary: z.string().max(320),
+  recommendedVolume: z.number().min(0).max(1),
+  duckMusic: z.boolean(),
+  segments: z.array(z.object({
+    startSeconds: z.number().min(0).max(900),
+    endSeconds: z.number().min(0).max(900),
+    kind: z.enum(["speech", "reaction", "ambient", "silence", "other"]),
+    priority: z.enum(["keep", "optional", "mute"]),
+    reason: z.string().max(180)
+  })).max(20).default([])
+});
+
 const footageSchema = z.object({
   cameraMovement: z.string().max(160),
+  sourceAudio: sourceAudioSchema.optional(),
   bestSegments: z.array(z.object({
     startSeconds: z.number().min(0),
     endSeconds: z.number().min(0),
@@ -603,11 +639,11 @@ async function analyzeOneFootage(asset: DriveAsset): Promise<FootageAnalysis> {
     let analysisBytes: Uint8Array<ArrayBufferLike> = bytes;
     let analysisMimeType = asset.mimeType;
     if (!image) {
-      const prepared = await prepareVideoForAnalysis(bytes, asset.mimeType, "academy-reel-footage-", false);
+      const prepared = await prepareVideoForAnalysis(bytes, asset.mimeType, "academy-reel-footage-", true);
       if (!prepared) return fallbackSegments(asset);
       analysisBytes = prepared.bytes;
       analysisMimeType = prepared.mimeType;
-      console.info("[reel-footage] visual proxy prepared", {
+      console.info("[reel-footage] audiovisual proxy prepared", {
         assetId: asset.id,
         originalBytes: bytes.byteLength,
         analysisBytes: prepared.bytes.byteLength,
@@ -619,7 +655,7 @@ async function analyzeOneFootage(asset: DriveAsset): Promise<FootageAnalysis> {
 
     const prompt = image
       ? `Analise esta FOTO para uso como shot em um Reel 9:16. Não identifique pessoas. Retorne cameraMovement="still image" e exatamente 1 bestSegment com startSeconds=0, endSeconds=${STILL_ANALYSIS_DURATION_SECONDS}, score 0-100, focalX/focalY no assunto visual mais importante, endFocalX/endFocalY iguais ou levemente deslocados se um pan sutil melhorar a composição, motion="low", energy, shotType, framing, sceneType, subject curto e reason. Avalie composição, nitidez, ação sugerida, presença de marca/ambiente e área vazia.`
-      : `Analise visualmente este VÍDEO BRUTO para edição de Reel 9:16. A duração real é ${duration.toFixed(3)}s. Não identifique pessoas. Escolha 2–6 melhores segmentos e, para cada um, retorne startSeconds/endSeconds, score 0-100, focalX/focalY inicial e endFocalX/endFocalY final para acompanhar o assunto, motion, energy, shotType (establishing|speaker|interaction|audience|detail|brand|movement|closing|other), framing (wide|medium|close|detail|other), sceneType (room|corridor|stage|table|exterior|brand|people|detail|other), subject curto e reason. Premie ação legível, rostos/gestos bem enquadrados sem identificar ninguém, branding visível, mudança de escala e composição forte; penalize costas sem contexto, teto/chão, câmera perdida, duplicidade visual e planos gerais estáticos sem sujeito. Nenhum endSeconds pode ultrapassar ${duration.toFixed(3)}.`;
+      : `Analise visualmente E ESCUTE O ÁUDIO ORIGINAL deste VÍDEO BRUTO para edição de Reel 9:16. A duração real é ${duration.toFixed(3)}s. Não identifique pessoas e não transcreva falas palavra por palavra. Escolha 2–6 melhores segmentos e, para cada um, retorne startSeconds/endSeconds, score 0-100, focalX/focalY inicial e endFocalX/endFocalY final para acompanhar o assunto, motion, energy, shotType (establishing|speaker|interaction|audience|detail|brand|movement|closing|other), framing (wide|medium|close|detail|other), sceneType (room|corridor|stage|table|exterior|brand|people|detail|other), subject curto e reason. Premie ação legível, gestos bem enquadrados sem identificar ninguém, branding visível, mudança de escala e composição forte; penalize costas sem contexto, teto/chão, câmera perdida, duplicidade visual e planos gerais estáticos sem sujeito. Também retorne sourceAudio: hasAudio, speechPresent, speechIntelligible, ambientUseful, summary curto sem citação literal, recommendedVolume 0–1, duckMusic e até 20 segments com startSeconds/endSeconds, kind (speech|reaction|ambient|silence|other), priority (keep|optional|mute) e reason. Use o áudio somente para entender fala, reação, silêncio, aplauso e ambiente e decidir o mix do take. NÃO trate nenhuma música já presente no vídeo como catálogo ou escolha musical: a trilha do Reel será escolhida livremente pela IA em uma etapa separada. Nenhum endSeconds pode ultrapassar ${duration.toFixed(3)}.`;
     const analysis = await geminiMediaJson(analysisBytes, analysisMimeType, prompt, footageSchema);
     if (!analysis) {
       if (!image) {
@@ -654,6 +690,18 @@ async function analyzeOneFootage(asset: DriveAsset): Promise<FootageAnalysis> {
       height: asset.height ?? null,
       analysisMode: image ? "image" : "video",
       cameraMovement: analysis.cameraMovement,
+      ...(image || !analysis.sourceAudio ? {} : {
+        sourceAudio: {
+          ...analysis.sourceAudio,
+          segments: analysis.sourceAudio.segments
+            .map((segment) => ({
+              ...segment,
+              startSeconds: clamp(segment.startSeconds, 0, duration),
+              endSeconds: clamp(segment.endSeconds, 0, duration)
+            }))
+            .filter((segment) => segment.endSeconds > segment.startSeconds)
+        }
+      }),
       bestSegments
     };
   } catch (error) {
@@ -679,13 +727,19 @@ export async function analyzeDriveFootage(assets: DriveAsset[]) {
 async function chooseOpenMusic(input: {
   context?: string;
   reference: ReelReferenceTemporalAnalysis | null;
+  footage: FootageAnalysis[];
   targetDurationSeconds: number;
 }) {
   const referenceSummary = input.reference
     ? `ritmo=${input.reference.rhythm}; duração=${input.reference.durationSeconds.toFixed(1)}s; média por shot=${input.reference.averageShotSeconds.toFixed(2)}s`
     : `sem Reel específico; duração alvo=${input.targetDurationSeconds.toFixed(1)}s`;
+  const sourceAudioSummary = input.footage
+    .flatMap((analysis) => analysis.sourceAudio?.hasAudio ? [analysis.sourceAudio] : [])
+    .slice(0, 8)
+    .map((audio, index) => `take${index + 1}: fala=${audio.speechPresent ? "sim" : "não"}, inteligível=${audio.speechIntelligible ? "sim" : "não"}, ambienteÚtil=${audio.ambientUseful ? "sim" : "não"}, duck=${audio.duckMusic ? "sim" : "não"}, resumo=${audio.summary}`)
+    .join(" | ") || "áudio original não analisado ou ausente";
   return geminiTextJson(
-    `Você é o music director de um editor profissional de Reels. Escolha livremente UMA música real que combine com este conteúdo. Você NÃO está limitado a Google Drive, uploads do usuário ou uma lista pré-selecionada. Pode escolher uma faixa comercial conhecida ou uma faixa de produção musical, desde que a escolha seja específica e coerente com o contexto. Não cite nem reproduza letras. Contexto editorial: ${(input.context ?? "").slice(0, 2200) || "não informado"}. Referência audiovisual: ${referenceSummary}. Retorne title, artist, searchQuery, BPM aproximado, beatOffsetSeconds relativo ao trecho sugerido, startOffsetSeconds do trecho ideal na faixa, section descrevendo o trecho (ex.: intro, hook, refrão, drop) e reason curto em português. A aplicação buscará a faixa posteriormente em um catálogo licenciado; sua tarefa aqui é escolher e dirigir musicalmente a edição, não escolher um arquivo local.`,
+    `Você é o music director de um editor profissional de Reels. Escolha livremente UMA música real que combine com este conteúdo. Você NÃO está limitado a Google Drive, uploads do usuário, áudio já existente nos vídeos ou uma lista pré-selecionada. Pode escolher uma faixa comercial conhecida ou uma faixa de produção musical, desde que a escolha seja específica e coerente com o contexto. O áudio original dos takes abaixo é somente contexto editorial para você evitar conflito com falas e decidir energia/ducking; NUNCA escolha como trilha uma música que por acaso esteja tocando dentro de um vídeo bruto. Não cite nem reproduza letras. Contexto editorial: ${(input.context ?? "").slice(0, 2200) || "não informado"}. Referência audiovisual: ${referenceSummary}. Áudio original dos takes: ${sourceAudioSummary}. Retorne title, artist, searchQuery, BPM aproximado, beatOffsetSeconds relativo ao trecho sugerido, startOffsetSeconds do trecho ideal na faixa, section descrevendo o trecho (ex.: intro, hook, refrão, drop) e reason curto em português. A aplicação buscará a faixa posteriormente em um catálogo licenciado; sua tarefa aqui é escolher e dirigir musicalmente a edição, não escolher um arquivo local.`,
     musicDirectionSchema
   );
 }
@@ -953,7 +1007,7 @@ export async function analyzeAndPlanReel(
   }
 
   const targetDurationSeconds = reference ? clamp(reference.durationSeconds, 1, 180) : fallbackTargetDuration(visuals.length);
-  const musicDirection = await chooseOpenMusic({ context: options.context, reference, targetDurationSeconds });
+  const musicDirection = await chooseOpenMusic({ context: options.context, reference, footage, targetDurationSeconds });
   if (!musicDirection) {
     throw new Error("A IA não conseguiu escolher uma trilha musical para este Reel. A geração foi interrompida para não voltar silenciosamente ao catálogo do Drive ou a uma escolha manual.");
   }

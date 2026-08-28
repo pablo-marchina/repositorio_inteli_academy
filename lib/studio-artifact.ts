@@ -1,5 +1,5 @@
 import type { DriveAsset, StudioFrame, StudioPayload } from "@/lib/types";
-import { buildReelEditingPlan, type FootageAnalysis, type MusicDirection, type ReelEditingPlan } from "@/lib/studio-reel-analysis";
+import { buildReelEditingPlan, type FootageAnalysis, type MusicDirection, type ReelEditingPlan, type SourceAudioAnalysis } from "@/lib/studio-reel-analysis";
 import { effectivePostArchetype, requiresPartnerBrand } from "@/lib/studio-post-archetype";
 
 export type StudioSemanticRole = "eyebrow" | "headline" | "body" | "stat" | "statLabel" | "bullets" | "media" | "logo" | "primaryLogo" | "partnerLogo" | "brandElement" | "mascot" | "pagination" | "decoration" | "background";
@@ -68,6 +68,7 @@ export type StudioVideoTrack = {
   volume?: number;
   muted?: boolean;
   musicDirection?: MusicDirection;
+  sourceAudioAnalysis?: SourceAudioAnalysis;
 };
 
 export type StudioFigmaVideoLayout = {
@@ -86,7 +87,7 @@ export type StudioFigmaVideoLayout = {
 };
 
 export type StudioVideoTimeline = {
-  schemaVersion: 1 | 2 | 3 | 4;
+  schemaVersion: 1 | 2 | 3 | 4 | 5;
   engine: "remotion";
   interchange: "opentimelineio";
   fps: number;
@@ -242,9 +243,17 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
   const fps = 30;
   const plan = suppliedPlan ?? fallbackPlan(driveAssets);
   const byId = new Map(driveAssets.map((asset) => [asset.id, asset]));
+  const analysisByAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
   const tracks: StudioVideoTrack[] = plan.shots.map((shot, index) => {
     const asset = byId.get(shot.assetId);
     const image = asset?.mimeType.startsWith("image/") ?? false;
+    const sourceAudio = analysisByAsset.get(shot.assetId)?.sourceAudio;
+    const keepAudio = sourceAudio?.segments.some((segment) => segment.priority === "keep" && segment.endSeconds > shot.sourceInSeconds && segment.startSeconds < shot.sourceOutSeconds) ?? false;
+    const sourceVolume = image || sourceAudio?.hasAudio === false
+      ? 0
+      : keepAudio
+        ? Math.max(.72, sourceAudio?.recommendedVolume ?? .72)
+        : sourceAudio?.recommendedVolume ?? (plan.musicDirection ? .22 : .72);
     return {
       id: `visual-footage-${index + 1}`,
       name: `V1.${index + 1} · ${image ? "Foto" : "Footage"} · ${asset?.name ?? shot.assetId}`,
@@ -262,10 +271,36 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
       zIndex: 0,
       editable: true,
       assetId: shot.assetId,
-      muted: image ? true : Boolean(plan.musicAssetId),
-      volume: image || plan.musicAssetId ? 0 : plan.musicDirection ? .18 : .72
+      muted: image || sourceAudio?.hasAudio === false || sourceVolume <= .001,
+      volume: sourceVolume,
+      ...(sourceAudio ? { sourceAudioAnalysis: sourceAudio } : {})
     } satisfies StudioVideoTrack;
   });
+
+  const sourceAudioTracks = plan.shots.flatMap((shot, index): StudioVideoTrack[] => {
+    const asset = byId.get(shot.assetId);
+    const sourceAudio = analysisByAsset.get(shot.assetId)?.sourceAudio;
+    if (!asset?.mimeType.startsWith("video/") || !sourceAudio?.hasAudio) return [];
+    const keepAudio = sourceAudio.segments.some((segment) => segment.priority === "keep" && segment.endSeconds > shot.sourceInSeconds && segment.startSeconds < shot.sourceOutSeconds);
+    const volume = keepAudio ? Math.max(.72, sourceAudio.recommendedVolume) : sourceAudio.recommendedVolume;
+    return [{
+      id: `audio-source-${index + 1}`,
+      name: `A2.${index + 1} · Áudio original · ${asset.name}`,
+      kind: "audio",
+      role: sourceAudio.speechPresent ? "voice" : "sfx",
+      startFrame: Math.round(shot.timelineStartSeconds * fps),
+      durationInFrames: Math.max(1, Math.round(shot.durationSeconds * fps)),
+      sourceStartFrame: Math.max(0, Math.round(shot.sourceInSeconds * fps)),
+      sourceEndFrame: Math.max(1, Math.round(shot.sourceOutSeconds * fps)),
+      zIndex: -5,
+      editable: true,
+      assetId: shot.assetId,
+      volume,
+      muted: volume <= .001,
+      sourceAudioAnalysis: sourceAudio
+    }];
+  });
+  tracks.push(...sourceAudioTracks);
 
   const durationInFrames = Math.max(
     1,
@@ -315,10 +350,11 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
     : `${plan.shots.length} shots estimados dinamicamente`;
   const coverage = `${Math.round((plan.analysisSummary?.coverage ?? 0) * 100)}% da mídia analisada visualmente`;
   const localCount = plan.footage.filter((analysis) => analysis.analysisMode === "local-video").length;
+  const heardSourceAudioCount = plan.footage.filter((analysis) => analysis.sourceAudio?.hasAudio).length;
   const analysisLabel = localCount ? `${localCount} mídia(s) com análise local FFmpeg; semântica remota indisponível nesses casos` : "semântica visual remota disponível para a mídia usada";
-  const executionSummary = `${structureLabel} · ${videoCount} vídeo(s) · ${imageCount} foto(s) · ${(durationInFrames / fps).toFixed(2)}s · ${audioLabel} · ${coverage} · ${analysisLabel}`;
+  const executionSummary = `${structureLabel} · ${videoCount} vídeo(s) · ${imageCount} foto(s) · ${(durationInFrames / fps).toFixed(2)}s · ${audioLabel} · áudio original ouvido em ${heardSourceAudioCount} mídia(s) · ${coverage} · ${analysisLabel}`;
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     engine: "remotion",
     interchange: "opentimelineio",
     fps,
@@ -394,6 +430,8 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
   const expectedShots = plan.reference?.shots.length ?? plan.shots.length;
   const shotCountMatches = footage.length === expectedShots && footage.length > 0 && footage.length <= 40;
   const sourceAudioAvailable = Boolean(plan.musicDirection || plan.musicAssetId) || plan.sourceAudio;
+  const usedVideoAnalyses = usedAnalysis.filter((analysis) => (assets.find((asset) => asset.id === analysis.assetId)?.mimeType ?? "").startsWith("video/"));
+  const listenedSourceAudio = usedVideoAnalyses.filter((analysis) => Boolean(analysis.sourceAudio)).length;
   const semanticRatio = semanticMatchRatio(plan);
   const semanticAvailable = semanticRatio !== null;
   const semanticReferenceOk = !plan.reference || semanticRatio === null || semanticRatio >= .55;
@@ -434,7 +472,8 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
       detail: `${usedAssets.size}/${visuals.length} visuais selecionados usados; repetição semântica/visual é penalizada durante a seleção.`
     },
     { id: "source-bounds", label: "In/out respeitam a mídia fonte", passed: boundsOk, severity: "error", detail: "Vídeos são validados contra durationMillis do Drive; fotos são stills sem sourceOut temporal de vídeo." },
-    { id: "audio", label: "Reel possui direção de áudio", passed: sourceAudioAvailable, severity: "error", detail: plan.musicDirection ? `IA escolheu ${plan.musicDirection.artist} — ${plan.musicDirection.title}; o arquivo deve ser resolvido em catálogo licenciado na etapa de publicação/edição final.` : plan.musicAssetId ? "Track musical legada baseada em asset." : "Áudio natural dos takes permanece ativo." },
+    { id: "audio", label: "Reel possui direção de áudio", passed: sourceAudioAvailable, severity: "error", detail: plan.musicDirection ? `IA escolheu livremente ${plan.musicDirection.artist} — ${plan.musicDirection.title}; o arquivo deve ser resolvido em catálogo licenciado na etapa de publicação/edição final.` : plan.musicAssetId ? "Track musical legada baseada em asset." : "Áudio natural dos takes permanece ativo." },
+    { id: "source-audio-listening", label: "IA pode ouvir o áudio original dos vídeos", passed: usedVideoAnalyses.length === 0 || listenedSourceAudio > 0, severity: "warning", detail: usedVideoAnalyses.length ? `${listenedSourceAudio}/${usedVideoAnalyses.length} vídeo(s) usados retornaram análise de fala/reação/ambiente; a música é escolhida em uma etapa independente e não usa o áudio bruto como catálogo.` : "A montagem não usa vídeos com áudio original." },
     { id: "music-beats", label: "Ritmo da trilha foi definido para a montagem", passed: dedicatedMusicTimingOk, severity: "error", detail: plan.musicDirection ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats estimados a partir de ${plan.musicDirection.bpm} BPM para dirigir os cortes; a waveform real será validada quando a faixa licenciada for resolvida.` : plan.musicAssetId ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats detectados na faixa legada; fonte=${plan.beatSource}.` : "Sem música dedicada; beat-alignment é desativado." },
     { id: "beat-alignment", label: "Cortes acompanham a música quando existe música analisada", passed: plan.beatSource !== "music" || cutFrames.length <= 1 || beatFrames.length < 3 || beatAlignmentRatio >= .6, severity: "warning", detail: plan.beatSource === "music" ? `${alignedCuts}/${cutFrames.length} cortes internos estão a até ${(beatTolerance / timeline.fps).toFixed(2)}s de um beat da música.` : "Não há música dedicada analisada; este check não usa beats da referência para fingir sincronização do áudio final." },
     {

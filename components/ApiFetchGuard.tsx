@@ -33,8 +33,27 @@ export function ApiFetchGuard() {
     const originalFetch = window.fetch.bind(window);
 
     const guardedFetch: typeof window.fetch = async (input, init) => {
-      const response = await originalFetch(input, init);
-      if (response.status < 400 || !requestPath(input).startsWith("/api/")) return response;
+      const path = requestPath(input);
+      let response: Response;
+      try {
+        response = await originalFetch(input, init);
+      } catch (error) {
+        if (!path.startsWith("/api/")) throw error;
+        const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+        console.warn("[api-fetch] API request failed before receiving an HTTP response", { path, error: String(error) });
+        return new Response(JSON.stringify({
+          error: offline
+            ? "Sem conexão com a internet. Reconecte-se e tente novamente."
+            : "A conexão com a API foi interrompida antes de o servidor responder. Atualize o projeto para verificar se a operação concluiu e tente novamente apenas se necessário.",
+          status: 503,
+          retryable: true
+        }), {
+          status: 503,
+          statusText: "Service Unavailable",
+          headers: { "content-type": "application/json", "x-academy-network-error": "1" }
+        });
+      }
+      if (response.status < 400 || !path.startsWith("/api/")) return response;
 
       const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
       if (contentType.includes("application/json")) return response;
