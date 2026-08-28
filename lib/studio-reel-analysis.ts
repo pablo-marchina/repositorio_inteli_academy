@@ -16,7 +16,7 @@ const MAX_MEDIA_DOWNLOAD_BYTES = 120_000_000;
 const TARGET_VIDEO_ANALYSIS_BYTES = 10_000_000;
 const MAX_REFERENCE_SHOTS = 40;
 const STILL_ANALYSIS_DURATION_SECONDS = 180;
-const SEMANTIC_ANALYSIS_VERSION = 2;
+const SEMANTIC_ANALYSIS_VERSION = 3;
 
 export type ReelShotType = "establishing" | "speaker" | "interaction" | "audience" | "detail" | "brand" | "movement" | "closing" | "other";
 export type ReelFraming = "wide" | "medium" | "close" | "detail" | "other";
