@@ -221,6 +221,21 @@ function mergeCurrentFigmaContent(payload: StudioPayload, state: Awaited<ReturnT
   } satisfies StudioPayload;
 }
 
+function reusableReelPlan(payload: StructuredStudioPayload) {
+  const plan = payload.artifact?.reelPlan;
+  if (!plan) return undefined;
+  const semanticVersion = plan.analysisSummary?.semanticVersion ?? 0;
+  const referenceIsCurrent = !plan.reference || (plan.reference.semanticVersion ?? 0) >= 2;
+  const analysisByAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
+  const everyUsedShotWasAnalyzed = plan.shots.length > 0 && plan.shots.every((shot) => analysisByAsset.get(shot.assetId)?.analysisMode !== "metadata-fallback");
+  return semanticVersion >= 2 && referenceIsCurrent && everyUsedShotWasAnalyzed ? plan : undefined;
+}
+
+function hasCurrentReelArtifact(payload: StructuredStudioPayload) {
+  if (payload.contentType !== "reel") return Boolean(getStudioArtifact(payload));
+  return Boolean(getStudioArtifact(payload) && reusableReelPlan(payload) && payload.artifact?.reelQuality);
+}
+
 export async function createStudioProject(rawInput: unknown, userId: string) {
   const input = createSchema.parse(rawInput);
   const referenceIds = [...new Set([...input.instagramReferenceMediaIds, ...(input.instagramReferenceMediaId ? [input.instagramReferenceMediaId] : [])])].slice(0, MAX_STUDIO_REFERENCES);
@@ -266,7 +281,9 @@ export async function createStudioRevision(projectId: string, baseVersionId: str
   ]);
   if (latest.error) throw latest.error;
   const revised = await reviseStudioPayload({ current, changeRequest, articles, references, driveAssets, historicalInstagramGuidance: history });
-  const reelPlan = revised.contentType === "reel" ? baseStructured.artifact?.reelPlan ?? await analyzeAndPlanReel(driveAssets, references) : undefined;
+  const reelPlan = revised.contentType === "reel"
+    ? reusableReelPlan(baseStructured) ?? await analyzeAndPlanReel(driveAssets, references)
+    : undefined;
   await cacheTemporalReference(references, reelPlan);
   const compiled = compileStudioArtifact(revised, { driveAssets, reelPlan, previousPayload: current, baseFigmaFrameIds: baseFigmaFrameIds.length === revised.frames.length ? baseFigmaFrameIds : undefined });
   const nextVersion = Number(latest.data.version_number) + 1;
@@ -285,14 +302,16 @@ export async function queueStudioVersionForFigma(projectId: string, versionId: s
   if (projectError) throw projectError;
   if (versionError) throw versionError;
   const parsed = studioPayloadSchema.passthrough().parse(version.payload) as StudioPayload;
+  const structuredVersion = version.payload as StructuredStudioPayload;
   const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : [];
   let payload: StructuredStudioPayload;
-  if (getStudioArtifact(version.payload)) {
-    payload = version.payload as StructuredStudioPayload;
+  if (hasCurrentReelArtifact(structuredVersion)) {
+    payload = structuredVersion;
   } else {
     const referenceIds = Array.isArray(project.instagram_reference_media_ids) ? project.instagram_reference_media_ids.map(String).slice(0, MAX_STUDIO_REFERENCES) : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
     const references = parsed.contentType === "reel" ? await getReferences(referenceIds) : [];
     const reelPlan = parsed.contentType === "reel" ? await analyzeAndPlanReel(driveAssets, references) : undefined;
+    await cacheTemporalReference(references, reelPlan);
     payload = compileStudioArtifact(parsed, { driveAssets, reelPlan });
     await admin.from("content_versions").update({ payload }).eq("id", versionId);
   }
@@ -365,7 +384,9 @@ export async function approveAndPublishStudioProject(projectId: string) {
   const structured = version.payload as StructuredStudioPayload;
   const frameIds = Array.isArray(version.figma_frame_ids) ? version.figma_frame_ids.map(String) : [];
   if (!frameIds.length) throw new Error("A versão escolhida ainda não foi importada pelo plugin do Figma.");
-  if (payload.contentType === "reel" && !structured.artifact?.reelQuality?.passed) throw new Error("O Reel não passou pelos gates estruturais de timeline (shots, bounds, áudio, crop e ritmo). Gere/revise antes de publicar.");
+  if (payload.contentType === "reel" && (!reusableReelPlan(structured) || !structured.artifact?.reelQuality?.passed)) {
+    throw new Error("O Reel não passou pelos gates atuais de fidelidade visual/semântica. Reanalise ou revise a versão antes de publicar.");
+  }
 
   await admin.from("content_projects").update({ status: "publishing", last_error: null }).eq("id", projectId);
   try {
