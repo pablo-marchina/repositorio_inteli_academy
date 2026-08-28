@@ -7,6 +7,7 @@ import { z } from "zod";
 import { decryptSecret } from "@/lib/crypto";
 import { env } from "@/lib/env";
 import { downloadDriveAsset } from "@/lib/google-drive";
+import { analyzeReelTemporalLocally, type LocalTemporalAnalysis } from "@/lib/local-reel-temporal-fallback";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { DriveAsset, InstagramReferencePost } from "@/lib/types";
 
@@ -29,8 +30,9 @@ type SemanticShot = {
 };
 
 export type ReelReferenceTemporalAnalysis = {
-  analysisMode: "video" | "cached" | "unavailable";
+  analysisMode: "video" | "cached" | "temporal-fallback" | "unavailable";
   semanticVersion: number;
+  semanticAvailable: boolean;
   durationSeconds: number;
   averageShotSeconds: number;
   rhythm: "slow" | "medium" | "fast" | "mixed";
@@ -52,7 +54,7 @@ export type FootageAnalysis = {
   durationSeconds: number;
   width: number | null;
   height: number | null;
-  analysisMode: "video" | "image" | "metadata-fallback";
+  analysisMode: "video" | "image" | "local-video" | "metadata-fallback";
   cameraMovement: string;
   bestSegments: Array<SemanticShot & {
     startSeconds: number;
@@ -115,6 +117,7 @@ const sceneTypeSchema = z.enum(["room", "corridor", "stage", "table", "exterior"
 
 const temporalSchema = z.object({
   semanticVersion: z.number().int().min(SEMANTIC_ANALYSIS_VERSION).default(SEMANTIC_ANALYSIS_VERSION),
+  semanticAvailable: z.boolean().default(true),
   durationSeconds: z.number().min(1).max(180),
   averageShotSeconds: z.number().min(.2).max(20),
   rhythm: z.enum(["slow", "medium", "fast", "mixed"]),
@@ -206,7 +209,20 @@ function runFfmpeg(args: string[]) {
   });
 }
 
-async function prepareVideoForAnalysis(bytes: Uint8Array, mimeType: string, prefix: string) {
+function proxyArgs(input: string, output: string, attempt: { scale: number; fps: number; bitrate: string; maxrate: string; bufsize: string }, includeAudio: boolean) {
+  return [
+    "-y", "-i", input,
+    "-map", "0:v:0",
+    "-vf", `scale=${attempt.scale}:-2:flags=lanczos,fps=${attempt.fps}`,
+    "-c:v", "libx264", "-preset", "veryfast",
+    "-b:v", attempt.bitrate, "-maxrate", attempt.maxrate, "-bufsize", attempt.bufsize,
+    "-pix_fmt", "yuv420p",
+    ...(includeAudio ? ["-map", "0:a?", "-c:a", "aac", "-b:a", "48k", "-ac", "1"] : ["-an"]),
+    "-movflags", "+faststart", output
+  ];
+}
+
+async function prepareVideoForAnalysis(bytes: Uint8Array, mimeType: string, prefix: string, includeAudio = false) {
   if (bytes.byteLength > MAX_MEDIA_DOWNLOAD_BYTES) return null;
   if (bytes.byteLength <= TARGET_VIDEO_ANALYSIS_BYTES && mimeType === "video/mp4") {
     return { bytes, mimeType, transcoded: false };
@@ -218,22 +234,26 @@ async function prepareVideoForAnalysis(bytes: Uint8Array, mimeType: string, pref
   try {
     await writeFile(input, bytes);
     const attempts = [
-      { scale: 480, fps: 10, bitrate: "420k", maxrate: "520k", bufsize: "1040k", audio: "48k" },
-      { scale: 360, fps: 8, bitrate: "260k", maxrate: "320k", bufsize: "640k", audio: "40k" }
+      { scale: 480, fps: 10, bitrate: "420k", maxrate: "520k", bufsize: "1040k" },
+      { scale: 360, fps: 8, bitrate: "260k", maxrate: "320k", bufsize: "640k" }
     ];
     for (const attempt of attempts) {
-      await runFfmpeg([
-        "-y", "-i", input,
-        "-map", "0:v:0", "-map", "0:a?",
-        "-vf", `scale=${attempt.scale}:-2:flags=lanczos,fps=${attempt.fps}`,
-        "-c:v", "libx264", "-preset", "veryfast",
-        "-b:v", attempt.bitrate, "-maxrate", attempt.maxrate, "-bufsize", attempt.bufsize,
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", attempt.audio, "-ac", "1",
-        "-movflags", "+faststart", output
-      ]);
-      const compact = new Uint8Array(await readFile(output));
-      if (compact.byteLength <= MAX_INLINE_MEDIA_BYTES) return { bytes: compact, mimeType: "video/mp4", transcoded: true };
+      const audioModes = includeAudio ? [true, false] : [false];
+      for (const withAudio of audioModes) {
+        try {
+          await runFfmpeg(proxyArgs(input, output, attempt, withAudio));
+          const compact = new Uint8Array(await readFile(output));
+          if (compact.byteLength <= MAX_INLINE_MEDIA_BYTES) {
+            if (includeAudio && !withAudio) {
+              console.warn("[reel-analysis] proxy generated without audio because the source audio codec is unsupported");
+            }
+            return { bytes: compact, mimeType: "video/mp4", transcoded: true };
+          }
+        } catch (error) {
+          if (!includeAudio || !withAudio) throw error;
+          console.warn("[reel-analysis] proxy with audio failed; retrying video-only", { error: String(error) });
+        }
+      }
     }
     return null;
   } finally {
@@ -341,12 +361,33 @@ function normalizeReference(value: z.infer<typeof temporalSchema>): ReelReferenc
   return {
     analysisMode: "video",
     semanticVersion: value.semanticVersion,
+    semanticAvailable: value.semanticAvailable,
     durationSeconds: duration,
     averageShotSeconds: shots.length ? shots.reduce((sum, shot) => sum + shot.endSeconds - shot.startSeconds, 0) / shots.length : value.averageShotSeconds,
     rhythm: value.rhythm,
     shots,
     beatSeconds: [...new Set(value.beatSeconds.filter((second) => second > .05 && second <= duration))].sort((a, b) => a - b),
     textCues: value.textCues.filter((cue) => cue.endSeconds > cue.startSeconds && cue.startSeconds <= duration)
+  };
+}
+
+function referenceFromLocalTemporal(value: LocalTemporalAnalysis): ReelReferenceTemporalAnalysis {
+  return {
+    analysisMode: "temporal-fallback",
+    semanticVersion: SEMANTIC_ANALYSIS_VERSION,
+    semanticAvailable: false,
+    durationSeconds: value.durationSeconds,
+    averageShotSeconds: value.averageShotSeconds,
+    rhythm: value.rhythm,
+    shots: value.shots.map((shot) => ({
+      ...shot,
+      shotType: "other" as const,
+      framing: "other" as const,
+      sceneType: "other" as const,
+      subject: "função semântica indisponível; corte detectado localmente"
+    })),
+    beatSeconds: value.beatSeconds,
+    textCues: []
   };
 }
 
@@ -363,7 +404,7 @@ export async function analyzeInstagramReelReference(reference: InstagramReferenc
   if (!isVideo) return null;
   const downloaded = await fetchReferenceVideo(reference);
   if (!downloaded) return null;
-  const prepared = await prepareVideoForAnalysis(downloaded.bytes, downloaded.mimeType, "academy-reel-reference-");
+  const prepared = await prepareVideoForAnalysis(downloaded.bytes, downloaded.mimeType, "academy-reel-reference-", true);
   if (!prepared) return null;
 
   console.info("[reel-reference] semantic media prepared", {
@@ -377,10 +418,14 @@ export async function analyzeInstagramReelReference(reference: InstagramReferenc
   const analysis = await geminiMediaJson(
     prepared.bytes,
     prepared.mimeType,
-    `Analise temporal E VISUALMENTE este Reel real da Inteli Academy como referência de edição, sem identificar pessoas. Retorne semanticVersion=${SEMANTIC_ANALYSIS_VERSION}, duração total e TODOS os shots/cortes percebidos. Para cada shot informe boundaries em segundos, motion, energy, transition, focalX/focalY e também shotType (establishing|speaker|interaction|audience|detail|brand|movement|closing|other), framing (wide|medium|close|detail|other), sceneType (room|corridor|stage|table|exterior|brand|people|detail|other) e subject curto descrevendo apenas o papel visual da cena, sem nomes. Preserve a quantidade real de shots e a ordem narrativa. Retorne também beats/acentos audíveis aproximados e textCues somente quando texto editorial realmente aparece na imagem. O objetivo é reproduzir a linguagem audiovisual e a função de cada corte, não copiar o conteúdo.`,
+    `Analise temporal E VISUALMENTE este Reel real da Inteli Academy como referência de edição, sem identificar pessoas. Retorne semanticVersion=${SEMANTIC_ANALYSIS_VERSION}, semanticAvailable=true, duração total e TODOS os shots/cortes percebidos. Para cada shot informe boundaries em segundos, motion, energy, transition, focalX/focalY e também shotType (establishing|speaker|interaction|audience|detail|brand|movement|closing|other), framing (wide|medium|close|detail|other), sceneType (room|corridor|stage|table|exterior|brand|people|detail|other) e subject curto descrevendo apenas o papel visual da cena, sem nomes. Preserve a quantidade real de shots e a ordem narrativa. Retorne também beats/acentos audíveis aproximados e textCues somente quando texto editorial realmente aparece na imagem. O objetivo é reproduzir a linguagem audiovisual e a função de cada corte, não copiar o conteúdo.`,
     temporalSchema
   );
-  return analysis ? normalizeReference(analysis) : null;
+  if (analysis) return normalizeReference(analysis);
+
+  console.warn("[reel-reference] semantic Gemini analysis unavailable; using deterministic temporal scene analysis");
+  const local = await analyzeReelTemporalLocally(prepared.bytes);
+  return local ? referenceFromLocalTemporal(local) : null;
 }
 
 function fallbackSegments(asset: DriveAsset): FootageAnalysis {
@@ -440,6 +485,62 @@ function fallbackSegments(asset: DriveAsset): FootageAnalysis {
   };
 }
 
+function localFootageAnalysis(asset: DriveAsset, duration: number, value: LocalTemporalAnalysis): FootageAnalysis {
+  const sourceShots = value.shots.length ? value.shots : [{
+    startSeconds: 0,
+    endSeconds: duration,
+    motion: "low" as const,
+    energy: "low" as const,
+    transition: "cut",
+    focalX: .5,
+    focalY: .5
+  }];
+  const bestSegments = sourceShots
+    .map((shot, index) => ({
+      startSeconds: clamp(shot.startSeconds, 0, duration),
+      endSeconds: clamp(shot.endSeconds, 0, duration),
+      score: Math.max(48, 62 - index * 2),
+      focalX: .5,
+      focalY: .5,
+      endFocalX: .5,
+      endFocalY: .5,
+      motion: shot.motion,
+      energy: shot.energy,
+      shotType: "other" as const,
+      framing: "other" as const,
+      sceneType: "other" as const,
+      subject: "segmento visual detectado localmente",
+      reason: "segmento detectado diretamente nos pixels por FFmpeg; classificação semântica indisponível"
+    }))
+    .filter((segment) => segment.endSeconds - segment.startSeconds >= .2)
+    .slice(0, 6);
+
+  return {
+    assetId: asset.id,
+    durationSeconds: duration,
+    width: asset.width ?? null,
+    height: asset.height ?? null,
+    analysisMode: "local-video",
+    cameraMovement: `detecção visual local FFmpeg (${value.rhythm}); sem classificação semântica`,
+    bestSegments: bestSegments.length ? bestSegments : [{
+      startSeconds: 0,
+      endSeconds: duration,
+      score: 50,
+      focalX: .5,
+      focalY: .5,
+      endFocalX: .5,
+      endFocalY: .5,
+      motion: "low",
+      energy: "low",
+      shotType: "other",
+      framing: "other",
+      sceneType: "other",
+      subject: "take analisado localmente",
+      reason: "pixels analisados localmente; sem semântica remota"
+    }]
+  };
+}
+
 async function analyzeOneFootage(asset: DriveAsset): Promise<FootageAnalysis> {
   const image = isImageAsset(asset);
   const duration = image ? STILL_ANALYSIS_DURATION_SECONDS : mediaDuration(asset);
@@ -452,7 +553,7 @@ async function analyzeOneFootage(asset: DriveAsset): Promise<FootageAnalysis> {
     let analysisBytes: Uint8Array<ArrayBufferLike> = bytes;
     let analysisMimeType = asset.mimeType;
     if (!image) {
-      const prepared = await prepareVideoForAnalysis(bytes, asset.mimeType, "academy-reel-footage-");
+      const prepared = await prepareVideoForAnalysis(bytes, asset.mimeType, "academy-reel-footage-", false);
       if (!prepared) return fallbackSegments(asset);
       analysisBytes = prepared.bytes;
       analysisMimeType = prepared.mimeType;
@@ -470,7 +571,16 @@ async function analyzeOneFootage(asset: DriveAsset): Promise<FootageAnalysis> {
       ? `Analise esta FOTO para uso como shot em um Reel 9:16. Não identifique pessoas. Retorne cameraMovement="still image" e exatamente 1 bestSegment com startSeconds=0, endSeconds=${STILL_ANALYSIS_DURATION_SECONDS}, score 0-100, focalX/focalY no assunto visual mais importante, endFocalX/endFocalY iguais ou levemente deslocados se um pan sutil melhorar a composição, motion="low", energy, shotType, framing, sceneType, subject curto e reason. Avalie composição, nitidez, ação sugerida, presença de marca/ambiente e área vazia.`
       : `Analise visualmente este VÍDEO BRUTO para edição de Reel 9:16. A duração real é ${duration.toFixed(3)}s. Não identifique pessoas. Escolha 2–6 melhores segmentos e, para cada um, retorne startSeconds/endSeconds, score 0-100, focalX/focalY inicial e endFocalX/endFocalY final para acompanhar o assunto, motion, energy, shotType (establishing|speaker|interaction|audience|detail|brand|movement|closing|other), framing (wide|medium|close|detail|other), sceneType (room|corridor|stage|table|exterior|brand|people|detail|other), subject curto e reason. Premie ação legível, rostos/gestos bem enquadrados sem identificar ninguém, branding visível, mudança de escala e composição forte; penalize costas sem contexto, teto/chão, câmera perdida, duplicidade visual e planos gerais estáticos sem sujeito. Nenhum endSeconds pode ultrapassar ${duration.toFixed(3)}.`;
     const analysis = await geminiMediaJson(analysisBytes, analysisMimeType, prompt, footageSchema);
-    if (!analysis) return fallbackSegments(asset);
+    if (!analysis) {
+      if (!image) {
+        const local = await analyzeReelTemporalLocally(analysisBytes);
+        if (local) {
+          console.warn("[reel-footage] Gemini semantic analysis unavailable; using local visual scene analysis", { assetId: asset.id, shots: local.shots.length });
+          return localFootageAnalysis(asset, duration, local);
+        }
+      }
+      return fallbackSegments(asset);
+    }
 
     const bestSegments = analysis.bestSegments
       .map((segment) => ({
@@ -612,7 +722,8 @@ function candidateScore(input: {
   const { segment, analysis, referenceShot } = input;
   let score = segment.score;
   if (analysis.analysisMode === "metadata-fallback") score -= 80;
-  if (referenceShot) {
+  if (analysis.analysisMode === "local-video") score -= 6;
+  if (referenceShot && analysis.analysisMode !== "local-video") {
     if (segment.shotType === referenceShot.shotType) score += 22;
     else if (segment.shotType === "other" || referenceShot.shotType === "other") score -= 2;
     else score -= 8;
@@ -655,7 +766,7 @@ export function buildReelEditingPlan(input: {
   const visuallyAnalyzed = analyses.filter((analysis) => analysis.analysisMode !== "metadata-fallback");
   const candidateAnalyses = visuallyAnalyzed.length ? visuallyAnalyzed : analyses;
   if (input.reference && visuallyAnalyzed.length < Math.min(desiredCount, visuals.length)) {
-    throw new Error(`A referência possui ${desiredCount} shots, mas apenas ${visuallyAnalyzed.length}/${visuals.length} mídias foram analisadas visualmente. A geração foi interrompida para não produzir uma montagem arbitrária por metadados.`);
+    throw new Error(`A referência possui ${desiredCount} shots, mas apenas ${visuallyAnalyzed.length}/${visuals.length} mídias tiveram análise visual real ou local. A geração foi interrompida para não produzir uma montagem arbitrária por metadados.`);
   }
 
   const candidates = candidateAnalyses.flatMap((analysis) => analysis.bestSegments.map((segment) => ({ analysis, segment })));
@@ -669,7 +780,7 @@ export function buildReelEditingPlan(input: {
 
   for (let index = 0; index < desiredCount; index += 1) {
     const requestedDuration = Math.max(.12, durations[index]);
-    const referenceShot = input.reference?.shots[index];
+    const referenceShot = input.reference?.semanticAvailable === false ? undefined : input.reference?.shots[index];
     const ranked = [...candidates].sort((a, b) => candidateScore({ ...b, referenceShot, usedAssets, usedSemantic, usedScenes, requestedDuration }) - candidateScore({ ...a, referenceShot, usedAssets, usedSemantic, usedScenes, requestedDuration }));
     const candidate = ranked[0];
     if (!candidate) continue;
@@ -703,7 +814,7 @@ export function buildReelEditingPlan(input: {
       transition: transitionForReference(input.reference, index),
       semantic: { shotType: segment.shotType, framing: segment.framing, sceneType: segment.sceneType, subject: segment.subject, motion: segment.motion, energy: segment.energy },
       ...(referenceShot ? { referenceSemantic: { shotType: referenceShot.shotType, framing: referenceShot.framing, sceneType: referenceShot.sceneType, subject: referenceShot.subject, motion: referenceShot.motion, energy: referenceShot.energy } } : {}),
-      reason: `${segment.reason} · visual=${analysis.analysisMode} · função=${segment.shotType}/${segment.framing}/${segment.sceneType} · score ${segment.score.toFixed(0)}/100 · shot ${index + 1}/${desiredCount}${referenceShot ? ` alinhado a ${referenceShot.shotType}/${referenceShot.framing}` : " com diversidade semântica"}`
+      reason: `${segment.reason} · visual=${analysis.analysisMode} · função=${segment.shotType}/${segment.framing}/${segment.sceneType} · score ${segment.score.toFixed(0)}/100 · shot ${index + 1}/${desiredCount}${referenceShot ? ` alinhado a ${referenceShot.shotType}/${referenceShot.framing}` : input.reference ? " seguindo a cadência temporal da referência" : " com diversidade visual"}`
     });
     timelineStart += actualDuration;
     usedAssets.set(analysis.assetId, (usedAssets.get(analysis.assetId) ?? 0) + 1);
@@ -743,7 +854,7 @@ export async function analyzeAndPlanReel(assets: DriveAsset[], references: Insta
     musicAsset ? analyzeMusicAsset(musicAsset) : Promise.resolve(null)
   ]);
   if (selectedReel && !reference) {
-    throw new Error("A referência de Reel não pôde ser analisada visual e temporalmente. A geração foi interrompida em vez de imitar a referência apenas por duração.");
+    throw new Error("A referência de Reel não pôde ser analisada nem semanticamente pelo Gemini nem temporalmente pelo FFmpeg local. Verifique se a mídia do Instagram ainda está acessível.");
   }
   if (musicAsset && !music) {
     throw new Error("A faixa de áudio selecionada não pôde ser analisada para detectar beats. Escolha outra faixa ou gere sem música dedicada; o sistema não vai fingir edição no beat.");
@@ -753,7 +864,7 @@ export async function analyzeAndPlanReel(assets: DriveAsset[], references: Insta
   const visuallyAnalyzed = footage.filter((analysis) => analysis.analysisMode !== "metadata-fallback").length;
   const minimumCoverage = visuals.length <= 4 ? 1 : visuals.length <= 8 ? .75 : .67;
   if (visuals.length && visuallyAnalyzed / visuals.length < minimumCoverage) {
-    throw new Error(`Só ${visuallyAnalyzed}/${visuals.length} mídias foram analisadas visualmente. O mínimo seguro para esta geração é ${Math.ceil(visuals.length * minimumCoverage)}. Verifique Gemini/FFmpeg e tente novamente; o Reel não será montado por metadados genéricos.`);
+    throw new Error(`Só ${visuallyAnalyzed}/${visuals.length} mídias tiveram análise visual real/local. O mínimo seguro para esta geração é ${Math.ceil(visuals.length * minimumCoverage)}. O Reel não será montado usando apenas metadados genéricos.`);
   }
 
   return buildReelEditingPlan({ assets, footage, reference, music });

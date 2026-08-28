@@ -284,9 +284,13 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
   const videoCount = used.filter((asset) => asset.mimeType.startsWith("video/")).length;
   const imageCount = used.filter((asset) => asset.mimeType.startsWith("image/")).length;
   const audioLabel = plan.musicAssetId ? "música dedicada analisada" : "áudio natural dos takes; sem alegação de beat-match com a referência";
-  const structureLabel = plan.reference ? `${plan.reference.shots.length} shots semânticos herdados da referência` : `${plan.shots.length} shots estimados dinamicamente`;
+  const structureLabel = plan.reference
+    ? `${plan.reference.shots.length} shots ${plan.reference.semanticAvailable === false ? "temporais" : "semânticos"} herdados da referência`
+    : `${plan.shots.length} shots estimados dinamicamente`;
   const coverage = `${Math.round((plan.analysisSummary?.coverage ?? 0) * 100)}% da mídia analisada visualmente`;
-  const executionSummary = `${structureLabel} · ${videoCount} vídeo(s) · ${imageCount} foto(s) · ${(durationInFrames / fps).toFixed(2)}s · ${audioLabel} · ${coverage} · reframing baseado na análise por shot`;
+  const localCount = plan.footage.filter((analysis) => analysis.analysisMode === "local-video").length;
+  const analysisLabel = localCount ? `${localCount} mídia(s) com análise local FFmpeg; semântica remota indisponível nesses casos` : "semântica visual remota disponível para a mídia usada";
+  const executionSummary = `${structureLabel} · ${videoCount} vídeo(s) · ${imageCount} foto(s) · ${(durationInFrames / fps).toFixed(2)}s · ${audioLabel} · ${coverage} · ${analysisLabel}`;
   return {
     schemaVersion: 2,
     engine: "remotion",
@@ -302,8 +306,11 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
   };
 }
 
-function semanticMatchRatio(plan: ReelEditingPlan) {
+function semanticMatchRatio(plan: ReelEditingPlan): number | null {
   if (!plan.reference?.shots.length) return 1;
+  if (plan.reference.semanticAvailable === false) return null;
+  const byAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
+  if (plan.shots.some((shot) => byAsset.get(shot.assetId)?.analysisMode === "local-video")) return null;
   const scores = plan.shots.map((shot, index) => {
     const reference = plan.reference?.shots[index];
     if (!reference || !shot.semantic) return 0;
@@ -325,6 +332,7 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
   const usedAssets = new Set(footage.flatMap((track) => track.assetId ? [track.assetId] : []));
   const usedAnalysis = plan.footage.filter((analysis) => usedAssets.has(analysis.assetId));
   const selectedFallbacks = usedAnalysis.filter((analysis) => analysis.analysisMode === "metadata-fallback").length;
+  const selectedLocal = usedAnalysis.filter((analysis) => analysis.analysisMode === "local-video").length;
   const visuallyAnalyzedUsed = usedAnalysis.filter((analysis) => analysis.analysisMode !== "metadata-fallback").length;
   const analysisCoverage = plan.analysisSummary?.coverage ?? (plan.footage.length ? plan.footage.filter((analysis) => analysis.analysisMode !== "metadata-fallback").length / plan.footage.length : 0);
 
@@ -359,8 +367,9 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
   const shotCountMatches = footage.length === expectedShots && footage.length > 0 && footage.length <= 40;
   const sourceAudioAvailable = Boolean(plan.musicAssetId) || plan.sourceAudio;
   const semanticRatio = semanticMatchRatio(plan);
-  const semanticReferenceOk = !plan.reference || semanticRatio >= .55;
-  const referenceTextOk = !plan.reference || expectedTextFrames === null || (expectedTextFrames === 0 ? textFrames === 0 : textFrames <= expectedTextFrames * 1.35 + timeline.fps * .25);
+  const semanticAvailable = semanticRatio !== null;
+  const semanticReferenceOk = !plan.reference || semanticRatio === null || semanticRatio >= .55;
+  const referenceTextOk = !plan.reference || plan.reference.semanticAvailable === false || expectedTextFrames === null || (expectedTextFrames === 0 ? textFrames === 0 : textFrames <= expectedTextFrames * 1.35 + timeline.fps * .25);
   const visualAnalysisOk = usedAnalysis.length > 0 && selectedFallbacks === 0 && visuallyAnalyzedUsed === usedAnalysis.length && analysisCoverage >= .67;
 
   const checks: StudioBrandReport["checks"] = [
@@ -373,34 +382,52 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
     },
     {
       id: "visual-analysis-coverage",
-      label: "Shots usados foram realmente analisados visualmente",
+      label: "Shots usados possuem análise visual",
       passed: visualAnalysisOk,
       severity: "error",
-      detail: `${visuallyAnalyzedUsed}/${usedAnalysis.length} mídias usadas têm análise visual real; ${selectedFallbacks} fallback(s) usado(s); cobertura global ${Math.round(analysisCoverage * 100)}%.`
+      detail: `${visuallyAnalyzedUsed}/${usedAnalysis.length} mídias usadas têm análise visual real/local; ${selectedLocal} via FFmpeg local; ${selectedFallbacks} fallback(s) apenas por metadados; cobertura global ${Math.round(analysisCoverage * 100)}%.`
     },
     {
       id: "semantic-reference",
       label: "Função visual dos shots segue a referência",
-      passed: semanticReferenceOk,
-      severity: "error",
-      detail: plan.reference ? `Similaridade semântica média ${(semanticRatio * 100).toFixed(0)}% considerando função do shot, enquadramento, movimento, energia e tipo de cena.` : "Sem Reel específico como referência semântica."
+      passed: semanticAvailable ? semanticReferenceOk : false,
+      severity: semanticAvailable ? "error" : "warning",
+      detail: !plan.reference
+        ? "Sem Reel específico como referência semântica."
+        : semanticRatio === null
+          ? "A semântica completa não pôde ser medida porque a referência ou parte da mídia foi analisada localmente por FFmpeg. A cadência temporal continua baseada nos pixels reais, sem alegar equivalência semântica."
+          : `Similaridade semântica média ${(semanticRatio * 100).toFixed(0)}% considerando função do shot, enquadramento, movimento, energia e tipo de cena.`
     },
     {
       id: "asset-diversity",
       label: "Variedade de mídia",
       passed: usedAssets.size >= Math.min(3, visuals.length, footage.length),
       severity: "warning",
-      detail: `${usedAssets.size}/${visuals.length} visuais selecionados usados; repetição semântica também é penalizada durante a seleção.`
+      detail: `${usedAssets.size}/${visuals.length} visuais selecionados usados; repetição semântica/visual é penalizada durante a seleção.`
     },
     { id: "source-bounds", label: "In/out respeitam a mídia fonte", passed: boundsOk, severity: "error", detail: "Vídeos são validados contra durationMillis do Drive; fotos são stills sem sourceOut temporal de vídeo." },
     { id: "audio", label: "Reel possui áudio", passed: sourceAudioAvailable, severity: "error", detail: plan.musicAssetId ? "Track de música dedicada." : "Áudio natural dos takes permanece ativo; ele não é tratado como se estivesse sincronizado aos beats da referência." },
     { id: "music-beats", label: "Música dedicada foi analisada de verdade", passed: dedicatedMusicIsReal, severity: "error", detail: plan.musicAssetId ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats detectados na faixa selecionada; fonte=${plan.beatSource}.` : "Sem música dedicada; beat-alignment é desativado para não gerar falso positivo com o áudio dos takes." },
     { id: "beat-alignment", label: "Cortes acompanham a música quando existe música analisada", passed: plan.beatSource !== "music" || cutFrames.length <= 1 || beatFrames.length < 3 || beatAlignmentRatio >= .6, severity: "warning", detail: plan.beatSource === "music" ? `${alignedCuts}/${cutFrames.length} cortes internos estão a até ${(beatTolerance / timeline.fps).toFixed(2)}s de um beat da música.` : "Não há música dedicada analisada; este check não usa beats da referência para fingir sincronização do áudio final." },
-    { id: "focal-tracking", label: "Reframing deriva de análise visual", passed: focalTracking && selectedFallbacks === 0, severity: "error", detail: "Focais inicial/final são aceitos apenas quando a mídia usada passou por análise visual real." },
+    {
+      id: "focal-tracking",
+      label: selectedLocal ? "Crop seguro; tracking semântico parcial" : "Reframing deriva de análise visual",
+      passed: selectedLocal ? false : focalTracking && selectedFallbacks === 0,
+      severity: selectedLocal ? "warning" : "error",
+      detail: selectedLocal
+        ? `${selectedLocal} mídia(s) usada(s) vieram do fallback visual local; nesses shots o crop central é deliberadamente conservador e não é apresentado como tracking semântico.`
+        : "Focais inicial/final são aceitos apenas quando a mídia usada passou por análise visual semântica real."
+    },
     { id: "rhythm", label: "Ritmo respeita a referência", passed: plan.reference ? footage.length === plan.reference.shots.length : variation >= Math.min(2, footage.length), severity: "warning", detail: plan.reference ? `A duração relativa dos ${plan.reference.shots.length} shots vem do padrão real da referência.` : `${variation} durações distintas de shot na estimativa dinâmica.` },
-    { id: "reference-typography", label: "Texto acompanha os cues reais da referência", passed: referenceTextOk, severity: "error", detail: plan.reference ? `${plan.reference.textCues.length} cue(s) de texto detectado(s) na referência; ${textFrames} frames de texto executados.` : "Sem referência específica; usa janelas editoriais curtas padrão." },
-    { id: "semantic-execution", label: "StyleSummary não substitui a timeline", passed: plan.shots.length === footage.length && Boolean(timeline.executionSummary), severity: "error", detail: `Plano semântico validado contra execução: ${timeline.executionSummary}.` },
-    { id: "reference-temporal", label: "Referência foi lida visual e temporalmente", passed: !plan.reference || (plan.reference.shots.length > 0 && (plan.reference.semanticVersion ?? 0) >= 2), severity: "error", detail: plan.reference ? `${plan.reference.shots.length} shots com análise semântica v${plan.reference.semanticVersion ?? 0}.` : "Nenhuma referência de Reel específica foi exigida nesta geração." }
+    { id: "reference-typography", label: "Texto acompanha os cues reais quando detectáveis", passed: referenceTextOk, severity: "error", detail: plan.reference?.semanticAvailable === false ? "O fallback local não classifica texto; por segurança, nenhum textCue é inventado para a referência." : plan.reference ? `${plan.reference.textCues.length} cue(s) de texto detectado(s) na referência; ${textFrames} frames de texto executados.` : "Sem referência específica; usa janelas editoriais curtas padrão." },
+    { id: "semantic-execution", label: "StyleSummary não substitui a timeline", passed: plan.shots.length === footage.length && Boolean(timeline.executionSummary), severity: "error", detail: `Plano validado contra execução: ${timeline.executionSummary}.` },
+    {
+      id: "reference-temporal",
+      label: plan.reference?.semanticAvailable === false ? "Referência foi lida temporalmente nos pixels" : "Referência foi lida visual e temporalmente",
+      passed: !plan.reference || (plan.reference.shots.length > 0 && (plan.reference.semanticVersion ?? 0) >= 2),
+      severity: "error",
+      detail: plan.reference ? `${plan.reference.shots.length} shots detectados; modo=${plan.reference.analysisMode}; semântica=${plan.reference.semanticAvailable === false ? "indisponível, sem falso positivo" : `v${plan.reference.semanticVersion ?? 0}`}.` : "Nenhuma referência de Reel específica foi exigida nesta geração."
+    }
   ];
 
   const failures = checks.filter((check) => !check.passed);
