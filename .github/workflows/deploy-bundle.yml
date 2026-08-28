@@ -1,0 +1,29 @@
+name: Build deploy bundle
+
+on:
+  push:
+    branches: ["agent/deploy-bundle"]
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Pack repository source
+        run: |
+          tar \
+            --exclude=.git \
+            --exclude=node_modules \
+            --exclude=.next \
+            --exclude=.vercel \
+            -czf /tmp/inteli-academy-main.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inteli-academy-main-source
+          path: /tmp/inteli-academy-main.tar.gz
+          if-no-files-found: error
+          retention-days: 1
