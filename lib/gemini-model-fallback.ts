@@ -4,6 +4,9 @@ const GEMINI_GENERATE_URL = /^(https:\/\/generativelanguage\.googleapis\.com\/v1
 const EMERGENCY_FLASH_MODEL = "gemini-3.1-flash-lite";
 const RETRYABLE_MODEL_STATUSES = new Set([429, 500, 502, 503, 504]);
 const REEL_REFERENCE_PROMPT_MARKER = "Analise temporalmente este Reel REAL";
+const RHYTHMS = new Set(["slow", "medium", "fast", "mixed"]);
+const LEVELS = new Set(["low", "medium", "high"]);
+const DENSITIES = new Set(["light", "medium", "heavy"]);
 
 let installed = false;
 
@@ -36,6 +39,50 @@ function stripJsonFence(value: string) {
   return value.replace(/^```json\s*|```$/g, "").trim();
 }
 
+function numberInRange(value: unknown, min: number, max: number) {
+  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
+}
+
+function validShot(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const shot = value as Record<string, unknown>;
+  return numberInRange(shot.startSeconds, 0, 180)
+    && numberInRange(shot.endSeconds, 0, 180)
+    && typeof shot.motion === "string" && LEVELS.has(shot.motion)
+    && typeof shot.energy === "string" && LEVELS.has(shot.energy)
+    && typeof shot.transition === "string" && shot.transition.length <= 80
+    && (shot.focalX === undefined || numberInRange(shot.focalX, 0, 1))
+    && (shot.focalY === undefined || numberInRange(shot.focalY, 0, 1));
+}
+
+function validTextCue(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const cue = value as Record<string, unknown>;
+  return numberInRange(cue.startSeconds, 0, 180)
+    && numberInRange(cue.endSeconds, 0, 180)
+    && typeof cue.density === "string" && DENSITIES.has(cue.density)
+    && typeof cue.placement === "string" && cue.placement.length <= 120;
+}
+
+function validTemporalPayload(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const parsed = value as Record<string, unknown>;
+  if (!numberInRange(parsed.durationSeconds, 1, 180)) return false;
+  if (!numberInRange(parsed.averageShotSeconds, .2, 20)) return false;
+  if (typeof parsed.rhythm !== "string" || !RHYTHMS.has(parsed.rhythm)) return false;
+  if (!Array.isArray(parsed.shots) || parsed.shots.length < 1 || parsed.shots.length > 40) return false;
+  if (!parsed.shots.every(validShot)) return false;
+  if (parsed.beatSeconds !== undefined) {
+    if (!Array.isArray(parsed.beatSeconds) || parsed.beatSeconds.length > 400) return false;
+    if (!parsed.beatSeconds.every((beat) => numberInRange(beat, 0, 180))) return false;
+  }
+  if (parsed.textCues !== undefined) {
+    if (!Array.isArray(parsed.textCues) || parsed.textCues.length > 80) return false;
+    if (!parsed.textCues.every(validTextCue)) return false;
+  }
+  return true;
+}
+
 async function hasUsableReelTemporalPayload(response: Response) {
   try {
     const payload = await response.clone().json() as {
@@ -46,16 +93,7 @@ async function hasUsableReelTemporalPayload(response: Response) {
       .join("")
       .trim();
     if (!raw) return false;
-
-    const parsed = JSON.parse(stripJsonFence(raw)) as {
-      durationSeconds?: unknown;
-      shots?: unknown;
-    };
-    return typeof parsed.durationSeconds === "number"
-      && Number.isFinite(parsed.durationSeconds)
-      && parsed.durationSeconds > 0
-      && Array.isArray(parsed.shots)
-      && parsed.shots.length > 0;
+    return validTemporalPayload(JSON.parse(stripJsonFence(raw)));
   } catch {
     return false;
   }
@@ -70,7 +108,7 @@ async function remoteSuccessOrLocal(response: Response, init?: Parameters<typeof
   if (!response.ok || !isReelTemporalRequest(init)) return response;
   if (await hasUsableReelTemporalPayload(response)) return response;
 
-  console.warn("[reel-reference] Gemini returned HTTP 200 without a usable temporal payload; using local FFmpeg fallback");
+  console.warn("[reel-reference] Gemini returned HTTP 200 that does not satisfy the Reel temporal schema; using local FFmpeg fallback");
   return localReelFallbackOr(response, init);
 }
 
@@ -81,8 +119,8 @@ async function remoteSuccessOrLocal(response: Response, init?: Parameters<typeof
  * against configured fallback models and one low-cost emergency model. Before
  * any terminal non-2xx response is returned, Reel temporal analysis can fall
  * back to deterministic FFmpeg scene detection. Successful HTTP 200 responses
- * are also sanity-checked for Reel temporal requests so empty/malformed model
- * output cannot bypass the local analyzer and later fail schema validation.
+ * are checked against the required temporal payload shape so a semantically
+ * invalid model response cannot bypass the local analyzer and fail later.
  */
 export function installGeminiModelFallback(fallbackModels: string[]) {
   if (installed || typeof globalThis.fetch !== "function") return;
@@ -99,13 +137,8 @@ export function installGeminiModelFallback(fallbackModels: string[]) {
     let response = await nativeFetch(input, init);
     if (response.ok) return remoteSuccessOrLocal(response, init);
 
-    // A non-retryable remote error must not prevent a valid Reel reference from
-    // falling back to the local analyzer. For non-Reel requests this is a no-op.
     if (!shouldTryAnotherModel(response)) return localReelFallbackOr(response, init);
 
-    // The project calls Gemini with URL strings and reusable JSON bodies. Do not
-    // replay an arbitrary Request whose body may already have been consumed, but
-    // still give Reel temporal analysis a chance to run locally.
     if (typeof input !== "string" && !(input instanceof URL)) {
       return localReelFallbackOr(response, init);
     }
