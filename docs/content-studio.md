@@ -163,4 +163,5 @@ Publicação manual do Content Studio sempre exige aprovação explícita no wor
 - com música dedicada, o QA exige beats detectados na própria faixa e mede o alinhamento dos cortes à grade;
 - um Reel só pode ser publicado após `reelQuality.passed`, `renderQa.passed` e existência de `renderedReel`;
 - a publicação consulta a versão atual do Figma e rejeita um MP4 renderizado antes de uma edição manual posterior;
-- o build valida que o binário `ffmpeg-static` existe antes do deployment, evitando uma falha tardia no primeiro render.
+- `ffmpeg-static@5.2.0` é o único install script adicional explicitamente aprovado para o renderer; o `postinstall` falha se o binário não existir, evitando uma falha tardia no primeiro render;
+- os caminhos temporários usados para montar mídia em runtime são excluídos do tracing do Turbopack, evitando empacotar o repositório inteiro na função de render.
