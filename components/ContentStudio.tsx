@@ -20,19 +20,11 @@ type Reference = {
 const formats: Array<{ id: StudioContentType; title: string; description: string }> = [
   { id: "single", title: "Post único", description: "Uma peça 1080×1350 para o feed." },
   { id: "carousel", title: "Carrossel", description: "De 2 a 10 peças com progressão narrativa." },
-  { id: "reel", title: "Reel", description: "Vídeo selecionado do Drive + direção, capa e legenda." },
+  { id: "reel", title: "Reel", description: "6–12 cortes a partir dos vídeos selecionados + trilha opcional + direção Figma." },
   { id: "story", title: "Story", description: "Uma peça vertical 1080×1920." }
 ];
 
-export function ContentStudio({
-  articles,
-  initialReferences,
-  driveConnected
-}: {
-  articles: Article[];
-  initialReferences: Reference[];
-  driveConnected: boolean;
-}) {
+export function ContentStudio({ articles, initialReferences, driveConnected }: { articles: Article[]; initialReferences: Reference[]; driveConnected: boolean }) {
   const router = useRouter();
   const [contentType, setContentType] = useState<StudioContentType>("carousel");
   const [selectedArticles, setSelectedArticles] = useState<string[]>([]);
@@ -55,9 +47,12 @@ export function ContentStudio({
   }, [articles, query]);
 
   const compatibleAssets = useMemo(
-    () => driveAssets.filter((asset) => contentType === "reel" ? asset.mimeType.startsWith("video/") : asset.mimeType.startsWith("image/")),
+    () => driveAssets.filter((asset) => contentType === "reel" ? asset.mimeType.startsWith("video/") || asset.mimeType.startsWith("audio/") : asset.mimeType.startsWith("image/")),
     [driveAssets, contentType]
   );
+
+  const selectedVideoCount = selectedAssets.filter((id) => driveAssets.find((asset) => asset.id === id)?.mimeType.startsWith("video/")).length;
+  const selectedAudio = selectedAssets.map((id) => driveAssets.find((asset) => asset.id === id)).find((asset) => asset?.mimeType.startsWith("audio/"));
 
   function toggleArticle(id: string) {
     setSelectedArticles((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < 12 ? [...current, id] : current);
@@ -104,28 +99,28 @@ export function ContentStudio({
   }
 
   function toggleAsset(id: string) {
-    setSelectedAssets((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < 12 ? [...current, id] : current);
+    const asset = driveAssets.find((item) => item.id === id);
+    setSelectedAssets((current) => {
+      if (current.includes(id)) return current.filter((item) => item !== id);
+      if (current.length >= 12) return current;
+      if (asset?.mimeType.startsWith("audio/")) {
+        const withoutOtherAudio = current.filter((item) => !driveAssets.find((candidate) => candidate.id === item)?.mimeType.startsWith("audio/"));
+        return [...withoutOtherAudio, id];
+      }
+      return [...current, id];
+    });
   }
 
   async function generate() {
     setError("");
     if (useDrive && !selectedAssets.length) return setError("O uso do Drive está habilitado; escolha pelo menos uma mídia.");
-    if (contentType === "reel" && !selectedAssets.some((id) => driveAssets.find((asset) => asset.id === id)?.mimeType.startsWith("video/"))) {
-      return setError("Reel requer um vídeo selecionado do Drive.");
-    }
+    if (contentType === "reel" && !selectedVideoCount) return setError("Reel requer pelo menos um vídeo selecionado do Drive.");
     setGenerating(true);
     try {
       const response = await fetch("/api/studio/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          contentType,
-          articleIds: selectedArticles,
-          userContext,
-          instagramReferenceMediaIds: selectedReferences,
-          useDrive,
-          driveAssetIds: selectedAssets
-        })
+        body: JSON.stringify({ contentType, articleIds: selectedArticles, userContext, instagramReferenceMediaIds: selectedReferences, useDrive, driveAssetIds: selectedAssets })
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Falha ao gerar conteúdo.");
@@ -142,27 +137,23 @@ export function ContentStudio({
       <section className={styles.section}>
         <h2>1. Tipo de conteúdo</h2>
         <p>O formato controla proporção, número de peças, geração e publicação.</p>
-        <div className={styles.formatGrid}>
-          {formats.map((format) => (
-            <button key={format.id} type="button" className={`${styles.format} ${contentType === format.id ? styles.formatActive : ""}`} onClick={() => { setContentType(format.id); setSelectedAssets([]); }}>
-              <strong>{format.title}</strong><span>{format.description}</span>
-            </button>
-          ))}
-        </div>
+        <div className={styles.formatGrid}>{formats.map((format) => (
+          <button key={format.id} type="button" className={`${styles.format} ${contentType === format.id ? styles.formatActive : ""}`} onClick={() => { setContentType(format.id); setSelectedAssets([]); }}>
+            <strong>{format.title}</strong><span>{format.description}</span>
+          </button>
+        ))}</div>
       </section>
 
       <section className={styles.section}>
         <div className={styles.toolbar}><div><h2>2. Artigos <small>(opcional)</small></h2><p>Selecione artigos quando quiser fundamentar fatos, números ou uma pauta específica. Sem artigos, a geração usa o contexto informado e evita criar alegações factuais externas sem fonte.</p></div><span className={styles.count}>{selectedArticles.length}/12 selecionados</span></div>
         <input className={styles.search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar artigos por título, resumo ou fonte" />
-        <div className={styles.articleList}>
-          {filteredArticles.map((article) => (
-            <label className={styles.article} key={article.id}>
-              <input type="checkbox" checked={selectedArticles.includes(article.id)} onChange={() => toggleArticle(article.id)} />
-              <div><h3>{article.title}</h3><p>{article.summary}</p></div>
-              <span className={styles.meta}>{article.source_name}<br />{new Date(article.published_at).toLocaleDateString("pt-BR")}</span>
-            </label>
-          ))}
-        </div>
+        <div className={styles.articleList}>{filteredArticles.map((article) => (
+          <label className={styles.article} key={article.id}>
+            <input type="checkbox" checked={selectedArticles.includes(article.id)} onChange={() => toggleArticle(article.id)} />
+            <div><h3>{article.title}</h3><p>{article.summary}</p></div>
+            <span className={styles.meta}>{article.source_name}<br />{new Date(article.published_at).toLocaleDateString("pt-BR")}</span>
+          </label>
+        ))}</div>
       </section>
 
       <section className={styles.section}>
@@ -173,16 +164,11 @@ export function ContentStudio({
 
       <section className={styles.section}>
         <div className={styles.toolbar}>
-          <div><h2>4. Posts reais do Instagram como referência <small>(opcional)</small></h2><p>Você pode escolher vários posts. Eles formam juntos a referência visual/editorial prioritária; o sistema combina os padrões compatíveis entre eles.</p></div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <span className={styles.count}>{selectedReferences.length}/8 selecionados</span>
-            <button className={styles.secondary} type="button" disabled={syncingInstagram} onClick={syncReferences}>{syncingInstagram ? "Sincronizando…" : "Sincronizar @inteli.academy"}</button>
-          </div>
+          <div><h2>4. Posts reais do Instagram como referência <small>(opcional)</small></h2><p>Ao escolher um Reel, o sistema tenta ler cortes, ritmo, motion e timing do vídeo real. Se essa análise falhar, a geração é interrompida em vez de fingir fidelidade.</p></div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}><span className={styles.count}>{selectedReferences.length}/8 selecionados</span><button className={styles.secondary} type="button" disabled={syncingInstagram} onClick={syncReferences}>{syncingInstagram ? "Sincronizando…" : "Sincronizar @inteli.academy"}</button></div>
         </div>
         <div className={styles.referenceGrid}>
-          <button type="button" className={`${styles.reference} ${selectedReferences.length === 0 ? styles.referenceActive : ""}`} onClick={() => setSelectedReferences([])}>
-            <div className={styles.referenceImage} /><div className={styles.referenceBody}><strong>Sem referências específicas</strong><span>Usar o histórico real completo + Social Media como principal fonte visual do Figma.</span></div>
-          </button>
+          <button type="button" className={`${styles.reference} ${selectedReferences.length === 0 ? styles.referenceActive : ""}`} onClick={() => setSelectedReferences([])}><div className={styles.referenceImage} /><div className={styles.referenceBody}><strong>Sem referências específicas</strong><span>Usar o histórico real completo + Social Media como principal fonte visual do Figma.</span></div></button>
           {references.map((reference) => {
             const image = reference.thumbnail_url ?? reference.media_url;
             const active = selectedReferences.includes(reference.id);
@@ -195,25 +181,26 @@ export function ContentStudio({
       </section>
 
       <section className={styles.section}>
-        <div className={styles.toolbar}><div><h2>5. Mídia do Drive <small>(opcional)</small></h2><p>O sistema só pode usar os arquivos que você selecionar.</p></div>
-          <label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => enableDrive(event.target.checked)} /> Usar Drive</label>
-        </div>
+        <div className={styles.toolbar}><div><h2>5. Mídia do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? "Selecione vários vídeos para montagem. Você pode selecionar também uma única faixa de áudio; sem faixa dedicada, o Reel mantém o áudio dos takes." : "O sistema só pode usar os arquivos que você selecionar."}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => enableDrive(event.target.checked)} /> Usar Drive</label></div>
         {!driveConnected ? <p><a href="/api/drive/connect">Conecte o Google Drive em Configurações</a> para habilitar a biblioteca.</p> : null}
         {loadingDrive ? <p>Carregando biblioteca de mídia…</p> : null}
         {useDrive && !loadingDrive ? <>
-          <span className={styles.count}>{selectedAssets.length}/12 selecionados · mostrando {contentType === "reel" ? "vídeos" : "imagens"} compatíveis</span>
-          <div className={styles.mediaGrid}>{compatibleAssets.map((asset) => (
-            <button type="button" key={asset.id} className={`${styles.media} ${selectedAssets.includes(asset.id) ? styles.mediaActive : ""}`} onClick={() => toggleAsset(asset.id)}>
-              <div className={styles.mediaThumb} style={asset.mimeType.startsWith("image/") ? { backgroundImage: `url(/api/drive/preview/${encodeURIComponent(asset.id)})` } : undefined}>{asset.mimeType.startsWith("video/") ? "▶ vídeo" : ""}</div>
-              <div className={styles.mediaBody}><strong title={asset.name}>{asset.name}</strong><span>{asset.path?.join(" / ") || "raiz"}</span></div>
-            </button>
-          ))}</div>
+          <span className={styles.count}>{selectedAssets.length}/12 selecionados · {contentType === "reel" ? `${selectedVideoCount} vídeo(s)${selectedAudio ? ` · trilha: ${selectedAudio.name}` : " · áudio dos takes"}` : "imagens"}</span>
+          <div className={styles.mediaGrid}>{compatibleAssets.map((asset) => {
+            const isVideo = asset.mimeType.startsWith("video/");
+            const isAudio = asset.mimeType.startsWith("audio/");
+            const duration = asset.durationMillis ? `${(asset.durationMillis / 1000).toFixed(1)}s` : "";
+            return <button type="button" key={asset.id} className={`${styles.media} ${selectedAssets.includes(asset.id) ? styles.mediaActive : ""}`} onClick={() => toggleAsset(asset.id)}>
+              <div className={styles.mediaThumb} style={asset.mimeType.startsWith("image/") ? { backgroundImage: `url(/api/drive/preview/${encodeURIComponent(asset.id)})` } : undefined}>{isVideo ? "▶ vídeo" : isAudio ? "♪ áudio" : ""}</div>
+              <div className={styles.mediaBody}><strong title={asset.name}>{asset.name}</strong><span>{[asset.path?.join(" / ") || "raiz", duration].filter(Boolean).join(" · ")}</span></div>
+            </button>;
+          })}</div>
         </> : null}
       </section>
 
       <div className={styles.footer}>
         <div><strong>Pronto para gerar a V1</strong><div className={styles.count}>{selectedArticles.length} artigo(s) · {selectedReferences.length ? `${selectedReferences.length} referência(s) específica(s)` : "histórico geral"} · {selectedAssets.length} mídia(s) do Drive</div>{error ? <div className={styles.feedback}>{error}</div> : null}</div>
-        <button className={styles.primary} type="button" disabled={generating} onClick={generate}>{generating ? "Gerando…" : "Gerar versão visual"}</button>
+        <button className={styles.primary} type="button" disabled={generating} onClick={generate}>{generating ? "Analisando mídia e gerando…" : "Gerar versão visual"}</button>
       </div>
     </div>
   );

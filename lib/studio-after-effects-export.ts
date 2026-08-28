@@ -4,56 +4,29 @@ import type { StructuredStudioPayload, StudioVideoTimeline } from "@/lib/studio-
 import type { getCurrentFigmaSemanticState } from "@/lib/figma";
 
 type SemanticState = Awaited<ReturnType<typeof getCurrentFigmaSemanticState>>[number];
-
-type PackageFile = {
-  path: string;
-  data: string | Uint8Array;
-};
+type PackageFile = { path: string; data: string | Uint8Array };
 
 function safeName(value: string, fallback = "asset") {
   const normalized = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const cleaned = normalized.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return (cleaned || fallback).slice(0, 80);
 }
-
-function jsxString(value: string) {
-  return JSON.stringify(value).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-}
-
-function seconds(frame: number, fps: number) {
-  return Math.max(0, frame / fps);
-}
+function jsxString(value: string) { return JSON.stringify(value).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029"); }
+function seconds(frame: number, fps: number) { return Math.max(0, frame / fps); }
 
 function timelineWindow(timeline: StudioVideoTimeline, role: string) {
   const track = timeline.tracks.find((candidate) => candidate.role === role);
   if (!track) return { start: 0, end: timeline.durationInFrames / timeline.fps };
-  return {
-    start: seconds(track.startFrame, timeline.fps),
-    end: seconds(track.startFrame + track.durationInFrames, timeline.fps)
-  };
+  return { start: seconds(track.startFrame, timeline.fps), end: seconds(track.startFrame + track.durationInFrames, timeline.fps) };
 }
 
-function textLayerScript(input: {
-  role: string;
-  text: string;
-  box?: { x: number; y: number; width: number; height: number };
-  style?: { fontFamily?: string; fontSize?: number; fontWeight?: number; textAlignHorizontal?: string; lineHeightPx?: number };
-  nodeId: string;
-  start: number;
-  end: number;
-  compWidth: number;
-  compHeight: number;
-}) {
+function textLayerScript(input: { role: string; text: string; box?: { x: number; y: number; width: number; height: number }; style?: { fontFamily?: string; fontSize?: number; fontWeight?: number; textAlignHorizontal?: string; lineHeightPx?: number }; nodeId: string; start: number; end: number; compWidth: number; compHeight: number }) {
   const box = input.box ?? { x: 84, y: 1120, width: input.compWidth - 168, height: 240 };
   const x = Math.max(0, Math.min(input.compWidth, box.x + box.width / 2));
   const y = Math.max(0, Math.min(input.compHeight, box.y + box.height / 2));
   const fontSize = Math.max(12, Math.min(260, input.style?.fontSize ?? (input.role === "headline" ? 88 : 34)));
   const lineHeight = Math.max(fontSize, input.style?.lineHeightPx ?? fontSize * 1.15);
-  const align = input.style?.textAlignHorizontal === "CENTER"
-    ? "ParagraphJustification.CENTER_JUSTIFY"
-    : input.style?.textAlignHorizontal === "RIGHT"
-      ? "ParagraphJustification.RIGHT_JUSTIFY"
-      : "ParagraphJustification.LEFT_JUSTIFY";
+  const align = input.style?.textAlignHorizontal === "CENTER" ? "ParagraphJustification.CENTER_JUSTIFY" : input.style?.textAlignHorizontal === "RIGHT" ? "ParagraphJustification.RIGHT_JUSTIFY" : "ParagraphJustification.LEFT_JUSTIFY";
   const width = Math.max(40, box.width);
   const height = Math.max(40, box.height);
   return `
@@ -78,9 +51,9 @@ function textLayerScript(input: {
     if (${input.start.toFixed(4)} > 0) {
       var opacity = transform.property("ADBE Opacity");
       opacity.setValueAtTime(${input.start.toFixed(4)}, 0);
-      opacity.setValueAtTime(Math.min(duration, ${input.start.toFixed(4)} + 0.35), 100);
-      position.setValueAtTime(${input.start.toFixed(4)}, [${x.toFixed(2)}, ${(y + 36).toFixed(2)}]);
-      position.setValueAtTime(Math.min(duration, ${input.start.toFixed(4)} + 0.45), [${x.toFixed(2)}, ${y.toFixed(2)}]);
+      opacity.setValueAtTime(Math.min(duration, ${input.start.toFixed(4)} + 0.22), 100);
+      position.setValueAtTime(${input.start.toFixed(4)}, [${x.toFixed(2)}, ${(y + 30).toFixed(2)}]);
+      position.setValueAtTime(Math.min(duration, ${input.start.toFixed(4)} + 0.32), [${x.toFixed(2)}, ${y.toFixed(2)}]);
     }
   })();`;
 }
@@ -104,17 +77,7 @@ export function createAfterEffectsScript(input: {
     const window = timelineWindow(timeline, role);
     for (const item of items) {
       if (!item.text?.trim()) continue;
-      textScripts.push(textLayerScript({
-        role,
-        text: item.text,
-        box: item.box,
-        style: item.style,
-        nodeId: item.id,
-        start: window.start,
-        end: window.end,
-        compWidth: timeline.width,
-        compHeight: timeline.height
-      }));
+      textScripts.push(textLayerScript({ role, text: item.text, box: item.box, style: item.style, nodeId: item.id, start: window.start, end: window.end, compWidth: timeline.width, compHeight: timeline.height }));
     }
   }
 
@@ -124,19 +87,38 @@ export function createAfterEffectsScript(input: {
     if (!file) return [];
     const start = seconds(track.startFrame, timeline.fps);
     const end = seconds(track.startFrame + track.durationInFrames, timeline.fps);
+    const sourceStart = seconds(track.sourceStartFrame ?? 0, timeline.fps);
+    const focalX = track.crop?.focalX ?? .5;
+    const focalY = track.crop?.focalY ?? .5;
+    const zoom = track.crop?.zoom ?? 1;
+    const isVisual = track.kind === "video" || track.kind === "image";
     return [`
   (function () {
     var file = new File(root.fsName + ${jsxString(`/${file.relativePath}`)});
-    if (!file.exists) {
-      file = File.openDialog(${jsxString(`Localize a mídia: ${file.asset.name}`)});
-    }
+    if (!file.exists) file = File.openDialog(${jsxString(`Localize a mídia: ${file.asset.name}`)});
     if (!file || !file.exists) throw new Error(${jsxString(`Mídia obrigatória não localizada: ${file.asset.name}`)});
     var imported = app.project.importFile(new ImportOptions(file));
     var layer = comp.layers.add(imported);
     layer.name = ${jsxString(`${track.kind.toUpperCase()} • ${track.role} • ${file.asset.name}`)};
-    layer.startTime = ${start.toFixed(4)};
+    // Offset the layer so the source frame at sourceStart appears exactly at the timeline start.
+    layer.startTime = ${(start - sourceStart).toFixed(4)};
     layer.inPoint = ${start.toFixed(4)};
     layer.outPoint = Math.min(duration, ${Math.max(end, start + 0.1).toFixed(4)});
+    ${isVisual ? `
+    try {
+      var transform = layer.property("ADBE Transform Group");
+      var nativeWidth = Math.max(1, imported.width || comp.width);
+      var nativeHeight = Math.max(1, imported.height || comp.height);
+      var baseScale = Math.max(comp.width / nativeWidth, comp.height / nativeHeight) * 100 * ${zoom.toFixed(4)};
+      transform.property("ADBE Scale").setValue([baseScale, baseScale]);
+      var scaledWidth = nativeWidth * baseScale / 100;
+      var scaledHeight = nativeHeight * baseScale / 100;
+      var px = comp.width / 2 + (0.5 - ${focalX.toFixed(4)}) * scaledWidth;
+      var py = comp.height / 2 + (0.5 - ${focalY.toFixed(4)}) * scaledHeight;
+      transform.property("ADBE Position").setValue([px, py]);
+    } catch (_) {}
+    ` : ""}
+    ${track.kind === "audio" ? `try { layer.audio.audioLevels.setValue([${(20 * Math.log10(Math.max(.001, track.volume ?? .6))).toFixed(2)}, ${(20 * Math.log10(Math.max(.001, track.volume ?? .6))).toFixed(2)}]); } catch (_) {}` : ""}
   })();`];
   });
 
@@ -149,9 +131,8 @@ export function createAfterEffectsScript(input: {
     var root = new File($.fileName).parent;
     var duration = ${duration.toFixed(4)};
     var comp = app.project.items.addComp(${jsxString(`${input.projectName} · V${input.versionNumber}`)}, ${timeline.width}, ${timeline.height}, 1, duration, ${timeline.fps});
-    comp.bgColor = [0.078, 0.078, 0.078];
+    comp.bgColor = [0.039, 0.039, 0.039];
 
-    // Exact Figma graphics without editorial text. Import as a composition when supported so SVG elements stay editable shape layers.
     var graphicsFile = new File(root.fsName + ${jsxString(`/${input.figmaGraphicsPath}`)});
     if (graphicsFile.exists) {
       var graphicsOptions = new ImportOptions(graphicsFile);
@@ -163,7 +144,6 @@ export function createAfterEffectsScript(input: {
       graphicsLayer.outPoint = duration;
     }
 
-    // Keep the full approved Figma frame in the project as a disabled exact reference.
     var referenceFile = new File(root.fsName + ${jsxString(`/${input.figmaReferencePath}`)});
     if (referenceFile.exists) {
       var referenceOptions = new ImportOptions(referenceFile);
@@ -182,7 +162,7 @@ ${textScripts.join("\n")}
     comp.openInViewer();
     var output = new File(root.fsName + ${jsxString(`/InteliAcademy-V${input.versionNumber}.aep`)});
     app.project.save(output);
-    alert("Projeto criado com layers separados e salvo em:\n" + output.fsName);
+    alert("Projeto criado com cuts, trims, crop, áudio e layers separados e salvo em:\n" + output.fsName);
   } catch (error) {
     alert("Falha ao montar projeto Inteli Academy:\n" + error.toString());
     throw error;
@@ -194,15 +174,10 @@ ${textScripts.join("\n")}
 }
 
 export function stripSvgText(svg: string) {
-  return svg
-    .replace(/<text\b[^>]*>[\s\S]*?<\/text>/gi, "")
-    .replace(/<text\b[^>]*\/\s*>/gi, "");
+  return svg.replace(/<text\b[^>]*>[\s\S]*?<\/text>/gi, "").replace(/<text\b[^>]*\/\s*>/gi, "");
 }
 
-function writeAscii(buffer: Buffer, offset: number, length: number, value: string) {
-  buffer.write(value.slice(0, length), offset, length, "ascii");
-}
-
+function writeAscii(buffer: Buffer, offset: number, length: number, value: string) { buffer.write(value.slice(0, length), offset, length, "ascii"); }
 function writeOctal(buffer: Buffer, offset: number, length: number, value: number) {
   const text = Math.max(0, Math.floor(value)).toString(8).padStart(length - 1, "0").slice(-(length - 1)) + "\0";
   writeAscii(buffer, offset, length, text);
@@ -225,8 +200,7 @@ function tarHeader(path: string, size: number) {
   writeAscii(header, 297, 32, "inteli-academy");
   let checksum = 0;
   for (const byte of header) checksum += byte;
-  const checksumText = checksum.toString(8).padStart(6, "0") + "\0 ";
-  writeAscii(header, 148, 8, checksumText);
+  writeAscii(header, 148, 8, checksum.toString(8).padStart(6, "0") + "\0 ");
   return header;
 }
 
@@ -244,10 +218,10 @@ export function createTarGz(files: PackageFile[]) {
 }
 
 export function packageAssetPath(asset: DriveAsset) {
-  const extension = asset.name.includes(".") ? "" : asset.mimeType.startsWith("video/") ? ".mp4" : ".png";
+  const extension = asset.name.includes(".") ? "" : asset.mimeType.startsWith("video/") ? ".mp4" : asset.mimeType.startsWith("audio/") ? ".mp3" : ".png";
   return `assets/${safeName(asset.name, asset.id)}${extension}`;
 }
 
 export function afterEffectsReadme(versionNumber: number) {
-  return `INTELI ACADEMY — AFTER EFFECTS EDITABLE PACKAGE\n\n1. Extraia este .tar.gz preservando as pastas.\n2. No After Effects, use File > Scripts > Run Script File.\n3. Execute InteliAcademy-V${versionNumber}.jsx.\n4. O script cria e salva InteliAcademy-V${versionNumber}.aep na mesma pasta.\n\nO projeto cria footage e textos em layers separados. A arte do Figma é incluída em SVG e importada como composição quando a versão do After Effects oferece suporte, permitindo editar seus elementos vetoriais. O frame completo aprovado também fica no projeto como reference layer desabilitada para conferência pixel-a-pixel.\n\nMídias pequenas podem vir dentro de assets/. Para evitar pacotes excessivamente grandes, mídias acima do limite do servidor não são embutidas; nesse caso o script abre um seletor para você localizar o arquivo original local. Depois que o .aep for criado, use File > Dependencies > Collect Files se quiser relocar o projeto com todas as mídias.\n`;
+  return `INTELI ACADEMY — AFTER EFFECTS EDITABLE PACKAGE\n\n1. Extraia este .tar.gz preservando as pastas.\n2. No After Effects, use File > Scripts > Run Script File.\n3. Execute InteliAcademy-V${versionNumber}.jsx.\n4. O script cria e salva InteliAcademy-V${versionNumber}.aep na mesma pasta.\n\nO projeto replica a timeline v2: cada take mantém seu source in/out, posição temporal e smart crop; a trilha de áudio fica em layer independente. Textos usam caixas/tipografia lidas do Figma e a arte Figma é incluída em SVG editável, com o frame aprovado como reference layer desabilitada.\n\nMídias pequenas podem vir dentro de assets/. Mídias grandes não são duplicadas no pacote: o script pede o arquivo original e preserva a edição ao relinkar. Depois, use File > Dependencies > Collect Files se quiser consolidar o projeto.\n`;
 }
