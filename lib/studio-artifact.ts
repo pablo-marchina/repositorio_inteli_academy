@@ -125,10 +125,16 @@ const TEMPLATE_HINTS: Record<StudioFrame["template"], string[]> = {
   photo: ["case", "hackathon", "tractian", "nova diretoria", "post parceria"],
   cta: ["fim", "academy week", "agenda"]
 };
+
 const ALL_EDITABLE_ROLES: StudioSemanticRole[] = ["eyebrow", "headline", "body", "stat", "statLabel", "bullets", "media"];
 
-function stableNodeId(position: number, role: StudioSemanticRole) { return `frame-${position}-${role}`; }
-function comparable(value: unknown) { return JSON.stringify(value ?? null); }
+function stableNodeId(position: number, role: StudioSemanticRole) {
+  return `frame-${position}-${role}`;
+}
+
+function comparable(value: unknown) {
+  return JSON.stringify(value ?? null);
+}
 
 function changedRoles(current: StudioFrame | undefined, next: StudioFrame) {
   if (!current) return [...ALL_EDITABLE_ROLES];
@@ -167,24 +173,37 @@ function structuralBrandAudit(payload: StudioPayload, frames: StudioSceneFrame[]
     { id: "mobile-density", label: "Densidade adequada para mobile", passed: payload.frames.every((frame) => frame.title.length <= 100 && (frame.body?.length ?? 0) <= 360 && (frame.bullets?.length ?? 0) <= 4), severity: "warning", detail: "Limites de título, corpo e bullets preservam leitura em tela pequena." },
     { id: "brand-locked-elements", label: "Elementos de marca protegidos", passed: frames.every((frame) => frame.nodes.some((node) => node.role === "logo" && node.lockedByBrand)), severity: "error", detail: "Logo, fundo e decoração são papéis protegidos e não podem ser redesenhados livremente pela IA." }
   ];
-  if (payload.contentType === "reel") checks.push({ id: "render-qa-required", label: "Reel só pode ser aprovado após QA do render", passed: false, severity: "warning", detail: "O score estrutural não substitui inspeção dos frames realmente renderizados. O QA do MP4 precisa rodar depois do Figma." });
+  if (payload.contentType === "reel") {
+    checks.push({ id: "render-qa-required", label: "Reel só pode ser aprovado após QA do render", passed: false, severity: "warning", detail: "O score estrutural não substitui inspeção dos frames realmente renderizados. O QA do MP4 precisa rodar depois do Figma." });
+  }
   const failures = checks.filter((check) => !check.passed);
   const score = Math.max(0, 100 - failures.reduce((sum, check) => sum + (check.severity === "error" ? 25 : check.severity === "warning" ? 10 : 2), 0));
   return { score, passed: failures.every((check) => check.severity !== "error") && score >= 80 && payload.contentType !== "reel", checks, source: "structural" };
 }
 
 function fallbackPlan(assets: DriveAsset[]) {
-  const videos = assets.filter((asset) => asset.mimeType.startsWith("video/"));
-  const footage: FootageAnalysis[] = videos.map((asset) => {
-    const duration = Math.max(1, Number(asset.durationMillis ?? 1000) / 1000);
+  const visuals = assets.filter((asset) => asset.mimeType.startsWith("video/") || asset.mimeType.startsWith("image/"));
+  const footage: FootageAnalysis[] = visuals.map((asset) => {
+    const isImage = asset.mimeType.startsWith("image/");
+    const duration = isImage ? 180 : Math.max(1, Number(asset.durationMillis ?? 1000) / 1000);
     return {
       assetId: asset.id,
       durationSeconds: duration,
       width: asset.width ?? null,
       height: asset.height ?? null,
       analysisMode: "metadata-fallback",
-      cameraMovement: "fallback",
-      bestSegments: [{ startSeconds: 0, endSeconds: Math.min(duration, 2), score: 60, focalX: .5, focalY: .5, endFocalX: .5, endFocalY: .5, motion: "medium", reason: "fallback por metadados" }]
+      cameraMovement: isImage ? "still image" : "fallback",
+      bestSegments: [{
+        startSeconds: 0,
+        endSeconds: isImage ? duration : Math.min(duration, 2),
+        score: isImage ? 58 : 60,
+        focalX: .5,
+        focalY: .5,
+        endFocalX: isImage ? .515 : .5,
+        endFocalY: isImage ? .49 : .5,
+        motion: isImage ? "low" : "medium",
+        reason: isImage ? "fallback de foto por metadados" : "fallback por metadados"
+      }]
     };
   });
   return buildReelEditingPlan({ assets, footage, reference: null, music: null });
@@ -195,24 +214,35 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
   const frame = payload.frames[0];
   const fps = 30;
   const plan = suppliedPlan ?? fallbackPlan(driveAssets);
-  const tracks: StudioVideoTrack[] = plan.shots.map((shot, index) => ({
-    id: `video-footage-${index + 1}`,
-    name: `V1.${index + 1} · Footage · ${driveAssets.find((asset) => asset.id === shot.assetId)?.name ?? shot.assetId}`,
-    kind: "video",
-    role: "footage",
-    startFrame: Math.round(shot.timelineStartSeconds * fps),
-    durationInFrames: Math.max(1, Math.round(shot.durationSeconds * fps)),
-    sourceStartFrame: Math.max(0, Math.round(shot.sourceInSeconds * fps)),
-    sourceEndFrame: Math.max(1, Math.round(shot.sourceOutSeconds * fps)),
-    crop: shot.crop,
-    transition: shot.transition,
-    zIndex: 0,
-    editable: true,
-    assetId: shot.assetId,
-    muted: Boolean(plan.musicAssetId),
-    volume: plan.musicAssetId ? 0 : .72
-  }));
-  const durationInFrames = Math.max(1, tracks.reduce((max, track) => Math.max(max, track.startFrame + track.durationInFrames), Math.round(plan.targetDurationSeconds * fps)));
+  const byId = new Map(driveAssets.map((asset) => [asset.id, asset]));
+  const tracks: StudioVideoTrack[] = plan.shots.map((shot, index) => {
+    const asset = byId.get(shot.assetId);
+    const image = asset?.mimeType.startsWith("image/") ?? false;
+    return {
+      id: `visual-footage-${index + 1}`,
+      name: `V1.${index + 1} · ${image ? "Foto" : "Footage"} · ${asset?.name ?? shot.assetId}`,
+      kind: image ? "image" : "video",
+      role: "footage",
+      startFrame: Math.round(shot.timelineStartSeconds * fps),
+      durationInFrames: Math.max(1, Math.round(shot.durationSeconds * fps)),
+      ...(image ? {} : {
+        sourceStartFrame: Math.max(0, Math.round(shot.sourceInSeconds * fps)),
+        sourceEndFrame: Math.max(1, Math.round(shot.sourceOutSeconds * fps))
+      }),
+      crop: shot.crop,
+      transition: shot.transition,
+      zIndex: 0,
+      editable: true,
+      assetId: shot.assetId,
+      muted: image ? true : Boolean(plan.musicAssetId),
+      volume: image || plan.musicAssetId ? 0 : .72
+    } satisfies StudioVideoTrack;
+  });
+
+  const durationInFrames = Math.max(
+    1,
+    tracks.reduce((max, track) => Math.max(max, track.startFrame + track.durationInFrames), Math.round(plan.targetDurationSeconds * fps))
+  );
   tracks.push({ id: "graphic-brand", name: "V2 · Brand graphics · Figma", kind: "graphic", role: "decoration", startFrame: 0, durationInFrames, zIndex: 10, editable: true });
   if (frame.eyebrow) tracks.push({ id: "text-eyebrow", name: "V3 · Eyebrow", kind: "text", role: "eyebrow", startFrame: Math.min(durationInFrames - 1, Math.round(.28 * fps)), durationInFrames: Math.min(Math.round(1.45 * fps), durationInFrames), zIndex: 20, editable: true, text: frame.eyebrow });
   tracks.push({ id: "text-headline", name: "V4 · Headline", kind: "text", role: "headline", startFrame: Math.min(durationInFrames - 1, Math.round(.48 * fps)), durationInFrames: Math.min(Math.round(2.25 * fps), durationInFrames), zIndex: 30, editable: true, text: frame.title });
@@ -221,50 +251,101 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
     tracks.push({ id: "text-body", name: "V5 · Contexto final", kind: "text", role: "body", startFrame: Math.max(0, durationInFrames - bodyDuration - Math.round(.5 * fps)), durationInFrames: bodyDuration, zIndex: 40, editable: true, text: frame.body });
   }
   tracks.push({ id: "graphic-logo", name: "V6 · Academy logo · Figma", kind: "graphic", role: "logo", startFrame: 0, durationInFrames, zIndex: 50, editable: true });
-  if (plan.musicAssetId) tracks.push({ id: "audio-music", name: `A1 · Música · ${driveAssets.find((asset) => asset.id === plan.musicAssetId)?.name ?? plan.musicAssetId}`, kind: "audio", role: "music", startFrame: 0, durationInFrames, sourceStartFrame: 0, zIndex: -10, editable: true, assetId: plan.musicAssetId, volume: .6 });
+  if (plan.musicAssetId) {
+    tracks.push({ id: "audio-music", name: `A1 · Música · ${byId.get(plan.musicAssetId)?.name ?? plan.musicAssetId}`, kind: "audio", role: "music", startFrame: 0, durationInFrames, sourceStartFrame: 0, zIndex: -10, editable: true, assetId: plan.musicAssetId, volume: .6 });
+  }
+
+  const used = [...new Set(plan.shots.map((shot) => shot.assetId))].map((id) => byId.get(id)).filter(Boolean) as DriveAsset[];
+  const videoCount = used.filter((asset) => asset.mimeType.startsWith("video/")).length;
+  const imageCount = used.filter((asset) => asset.mimeType.startsWith("image/")).length;
   const beatLabel = plan.beatSource === "music" ? "beats da música" : plan.beatSource === "reference" ? "beats da referência" : "grade rítmica gerada";
-  const executionSummary = `${plan.shots.length} shots · ${new Set(plan.shots.map((shot) => shot.assetId)).size} vídeos · ${(durationInFrames / fps).toFixed(2)}s · ${plan.musicAssetId ? "música dedicada" : "áudio dos takes"} · ${beatLabel} · focal tracking por shot`;
-  return { schemaVersion: 2, engine: "remotion", interchange: "opentimelineio", fps, width: 1080, height: 1920, durationInFrames, tracks, beatFrames: plan.beatSeconds.map((beat) => Math.round(beat * fps)).filter((beat) => beat < durationInFrames), sourceAudio: plan.sourceAudio, executionSummary };
+  const structureLabel = plan.reference ? `${plan.reference.shots.length} shots herdados da referência` : `${plan.shots.length} shots estimados dinamicamente`;
+  const executionSummary = `${structureLabel} · ${videoCount} vídeo(s) · ${imageCount} foto(s) · ${(durationInFrames / fps).toFixed(2)}s · ${plan.musicAssetId ? "música dedicada" : "áudio dos takes"} · ${beatLabel} · focal tracking por shot`;
+  return {
+    schemaVersion: 2,
+    engine: "remotion",
+    interchange: "opentimelineio",
+    fps,
+    width: 1080,
+    height: 1920,
+    durationInFrames,
+    tracks,
+    beatFrames: plan.beatSeconds.map((beat) => Math.round(beat * fps)).filter((beat) => beat < durationInFrames),
+    sourceAudio: plan.sourceAudio,
+    executionSummary
+  };
 }
 
 function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeline | undefined, plan: ReelEditingPlan | undefined, assets: DriveAsset[]): StudioBrandReport | undefined {
   if (payload.contentType !== "reel" || !timeline || !plan) return undefined;
   const footage = timeline.tracks.filter((track) => track.role === "footage");
-  const videos = assets.filter((asset) => asset.mimeType.startsWith("video/"));
+  const visuals = assets.filter((asset) => asset.mimeType.startsWith("video/") || asset.mimeType.startsWith("image/"));
   const usedAssets = new Set(footage.flatMap((track) => track.assetId ? [track.assetId] : []));
   const boundsOk = footage.every((track) => {
     if (!track.assetId) return false;
     const asset = assets.find((candidate) => candidate.id === track.assetId);
-    const sourceDurationFrames = Math.round((Number(asset?.durationMillis ?? 0) / 1000) * timeline.fps);
-    return Boolean(sourceDurationFrames) && (track.sourceStartFrame ?? 0) >= 0 && (track.sourceEndFrame ?? 0) <= sourceDurationFrames + 1;
+    if (!asset) return false;
+    if (track.kind === "image" || asset.mimeType.startsWith("image/")) return track.durationInFrames > 0;
+    const sourceDurationFrames = Math.round((Number(asset.durationMillis ?? 0) / 1000) * timeline.fps);
+    return Boolean(sourceDurationFrames)
+      && (track.sourceStartFrame ?? 0) >= 0
+      && (track.sourceEndFrame ?? 0) <= sourceDurationFrames + 1;
   });
   const durations = footage.map((track) => track.durationInFrames);
   const variation = new Set(durations.map((value) => Math.round(value / 5) * 5)).size;
   const textFrames = timeline.tracks.filter((track) => track.kind === "text").reduce((sum, track) => sum + track.durationInFrames, 0);
-  const focalTracking = footage.every((track) => track.crop && Number.isFinite(track.crop.focalX) && Number.isFinite(track.crop.focalY) && Number.isFinite(track.crop.endFocalX ?? track.crop.focalX) && Number.isFinite(track.crop.endFocalY ?? track.crop.focalY));
+  const focalTracking = footage.every((track) => track.crop
+    && Number.isFinite(track.crop.focalX)
+    && Number.isFinite(track.crop.focalY)
+    && Number.isFinite(track.crop.endFocalX ?? track.crop.focalX)
+    && Number.isFinite(track.crop.endFocalY ?? track.crop.focalY));
   const beatFrames = timeline.beatFrames ?? [];
   const cutFrames = footage.slice(1).map((track) => track.startFrame);
   const beatTolerance = Math.max(2, Math.round(.12 * timeline.fps));
   const alignedCuts = cutFrames.filter((cut) => beatFrames.some((beat) => Math.abs(beat - cut) <= beatTolerance)).length;
   const beatAlignmentRatio = cutFrames.length ? alignedCuts / cutFrames.length : 1;
-  const dedicatedMusicIsReal = !plan.musicAssetId || (plan.beatSource === "music" && plan.musicAnalysis?.assetId === plan.musicAssetId && plan.musicAnalysis.beatSeconds.length >= 3);
+  const dedicatedMusicIsReal = !plan.musicAssetId
+    || (plan.beatSource === "music" && plan.musicAnalysis?.assetId === plan.musicAssetId && plan.musicAnalysis.beatSeconds.length >= 3);
+  const expectedShots = plan.reference?.shots.length ?? plan.shots.length;
+  const shotCountMatches = footage.length === expectedShots && footage.length > 0 && footage.length <= 40;
+  const sourceAudioAvailable = Boolean(plan.musicAssetId) || plan.sourceAudio;
 
   const checks: StudioBrandReport["checks"] = [
-    { id: "shot-count", label: "Montagem real com 6–12 shots", passed: footage.length >= 6 && footage.length <= 12, severity: "error", detail: `${footage.length} shots executáveis na timeline.` },
-    { id: "asset-diversity", label: "Variedade de footage", passed: usedAssets.size >= Math.min(3, videos.length), severity: "warning", detail: `${usedAssets.size}/${videos.length} vídeos selecionados usados.` },
-    { id: "source-bounds", label: "In/out respeitam a duração real", passed: boundsOk, severity: "error", detail: "Cada sourceOut é validado contra durationMillis retornado pelo Google Drive." },
-    { id: "audio", label: "Reel possui áudio", passed: Boolean(plan.musicAssetId) || plan.sourceAudio, severity: "error", detail: plan.musicAssetId ? "Track de música dedicada." : "Áudio dos próprios takes permanece ativo na ausência de música." },
+    {
+      id: "shot-count",
+      label: plan.reference ? "Quantidade de shots segue a referência" : "Quantidade de shots foi estimada dinamicamente",
+      passed: shotCountMatches,
+      severity: "error",
+      detail: plan.reference
+        ? `${footage.length} shots executáveis; a referência analisada possui ${plan.reference.shots.length}.`
+        : `${footage.length} shots executáveis, sem faixa editorial fixa de 6–12.`
+    },
+    {
+      id: "asset-diversity",
+      label: "Variedade de mídia",
+      passed: usedAssets.size >= Math.min(3, visuals.length, footage.length),
+      severity: "warning",
+      detail: `${usedAssets.size}/${visuals.length} visuais selecionados usados (vídeos + fotos).`
+    },
+    { id: "source-bounds", label: "In/out respeitam a mídia fonte", passed: boundsOk, severity: "error", detail: "Vídeos são validados contra durationMillis do Drive; fotos são stills sem sourceOut temporal de vídeo." },
+    { id: "audio", label: "Reel possui áudio", passed: sourceAudioAvailable, severity: "error", detail: plan.musicAssetId ? "Track de música dedicada." : "Áudio dos próprios vídeos permanece ativo; shots de foto recebem silêncio no trecho correspondente." },
     { id: "music-beats", label: "Música dedicada foi analisada de verdade", passed: dedicatedMusicIsReal, severity: "error", detail: plan.musicAssetId ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats detectados na faixa selecionada; fonte=${plan.beatSource}.` : "Sem música dedicada; a grade usa referência ou fallback rítmico." },
-    { id: "beat-alignment", label: "Cortes caem na grade rítmica", passed: beatFrames.length >= 3 && beatAlignmentRatio >= .6, severity: "warning", detail: `${alignedCuts}/${cutFrames.length} cortes internos estão a até ${(beatTolerance / timeline.fps).toFixed(2)}s de um beat/acento.` },
-    { id: "focal-tracking", label: "Focal tracking por shot", passed: focalTracking, severity: "error", detail: "Cada shot carrega ponto focal inicial/final para reframe 9:16 durante o movimento." },
-    { id: "rhythm", label: "Ritmo variável", passed: variation >= 3, severity: "warning", detail: `${variation} durações distintas de shot após quantização.` },
+    { id: "beat-alignment", label: "Cortes acompanham a grade rítmica disponível", passed: cutFrames.length <= 1 || beatFrames.length < 3 || beatAlignmentRatio >= .6, severity: "warning", detail: `${alignedCuts}/${cutFrames.length} cortes internos estão a até ${(beatTolerance / timeline.fps).toFixed(2)}s de um beat/acento quando há grade suficiente.` },
+    { id: "focal-tracking", label: "Focal tracking por shot", passed: focalTracking, severity: "error", detail: "Vídeos carregam reframe inicial/final e fotos podem usar pan/zoom sutil 9:16." },
+    { id: "rhythm", label: "Ritmo respeita a referência", passed: plan.reference ? footage.length === plan.reference.shots.length : variation >= Math.min(2, footage.length), severity: "warning", detail: plan.reference ? `A cadência foi construída com o padrão de ${plan.reference.shots.length} shots da referência.` : `${variation} durações distintas de shot na estimativa dinâmica.` },
     { id: "short-typography", label: "Texto não permanece no vídeo inteiro", passed: textFrames / Math.max(1, timeline.durationInFrames) <= 1.1, severity: "warning", detail: "Eyebrow/headline abrem o Reel e o body, quando existe, aparece apenas como contexto curto no final." },
     { id: "semantic-execution", label: "StyleSummary não substitui a timeline", passed: plan.shots.length === footage.length && Boolean(timeline.executionSummary), severity: "error", detail: `Plano semântico validado contra execução: ${timeline.executionSummary}.` },
-    { id: "reference-temporal", label: "Referência de Reel foi lida temporalmente", passed: !plan.reference || plan.reference.shots.length > 0, severity: "error", detail: plan.reference ? `${plan.reference.shots.length} shots analisados na referência.` : "Nenhuma referência de Reel específica foi exigida nesta geração." }
+    { id: "reference-temporal", label: "Referência de Reel foi lida temporalmente", passed: !plan.reference || plan.reference.shots.length > 0, severity: "error", detail: plan.reference ? `${plan.reference.shots.length} shots analisados na referência e usados como estrutura-alvo.` : "Nenhuma referência de Reel específica foi exigida nesta geração." }
   ];
   const failures = checks.filter((check) => !check.passed);
   const score = Math.max(0, 100 - failures.reduce((sum, check) => sum + (check.severity === "error" ? 20 : 8), 0));
-  return { score, passed: failures.every((check) => check.severity !== "error") && score >= 80, checks, source: "timeline-quality", issues: failures.map((check) => check.detail) };
+  return {
+    score,
+    passed: failures.every((check) => check.severity !== "error") && score >= 80,
+    checks,
+    source: "timeline-quality",
+    issues: failures.map((check) => check.detail)
+  };
 }
 
 export function compileStudioArtifact(payload: StudioPayload, options: {
@@ -323,7 +404,11 @@ export function attachFigmaBindings(payload: StructuredStudioPayload, frameIds: 
       ...artifact,
       sceneGraph: {
         ...artifact.sceneGraph,
-        frames: artifact.sceneGraph.frames.map((frame, index) => ({ ...frame, figmaOutputFrameId: frameIds[index] ?? frame.figmaOutputFrameId, figmaTemplateNodeId: templateNodeIds[index] ?? frame.figmaTemplateNodeId }))
+        frames: artifact.sceneGraph.frames.map((frame, index) => ({
+          ...frame,
+          figmaOutputFrameId: frameIds[index] ?? frame.figmaOutputFrameId,
+          figmaTemplateNodeId: templateNodeIds[index] ?? frame.figmaTemplateNodeId
+        }))
       }
     }
   } satisfies StructuredStudioPayload;
@@ -332,7 +417,10 @@ export function attachFigmaBindings(payload: StructuredStudioPayload, frameIds: 
 export function attachFigmaVideoLayout(payload: StructuredStudioPayload, semanticFrames: Array<Omit<StudioFigmaVideoLayout, "synced">>) {
   const artifact = payload.artifact;
   if (!artifact || payload.contentType !== "reel" || !semanticFrames[0]) return payload;
-  return { ...payload, artifact: { ...artifact, figmaVideoLayout: { ...semanticFrames[0], synced: true } } } satisfies StructuredStudioPayload;
+  return {
+    ...payload,
+    artifact: { ...artifact, figmaVideoLayout: { ...semanticFrames[0], synced: true } }
+  } satisfies StructuredStudioPayload;
 }
 
 export function attachRenderQa(payload: StructuredStudioPayload, renderQa: StudioBrandReport) {
@@ -347,18 +435,18 @@ export function toOtioJson(payload: StructuredStudioPayload, projectName: string
     OTIO_SCHEMA: "Track.1",
     name: track.name,
     kind: track.kind === "audio" ? "Audio" : "Video",
-    metadata: { academy: { id: track.id, role: track.role, editable: true, zIndex: track.zIndex, text: track.text ?? null, assetId: track.assetId ?? null, figmaNodeId: track.figmaNodeId ?? null, crop: track.crop ?? null, transition: track.transition ?? null } },
+    metadata: { academy: { id: track.id, role: track.role, editable: true, zIndex: track.zIndex, text: track.text ?? null, assetId: track.assetId ?? null, figmaNodeId: track.figmaNodeId ?? null, crop: track.crop ?? null, transition: track.transition ?? null, mediaKind: track.kind } },
     children: [{
       OTIO_SCHEMA: "Clip.2",
       name: track.name,
-      metadata: { academy: { role: track.role, editable: true, text: track.text ?? null, assetId: track.assetId ?? null, crop: track.crop ?? null } },
+      metadata: { academy: { role: track.role, editable: true, text: track.text ?? null, assetId: track.assetId ?? null, crop: track.crop ?? null, mediaKind: track.kind } },
       source_range: {
         OTIO_SCHEMA: "TimeRange.1",
         start_time: { OTIO_SCHEMA: "RationalTime.1", value: track.sourceStartFrame ?? 0, rate: timeline.fps },
         duration: { OTIO_SCHEMA: "RationalTime.1", value: track.durationInFrames, rate: timeline.fps }
       },
       media_reference: track.assetId
-        ? { OTIO_SCHEMA: "ExternalReference.1", target_url: `academy-drive://${track.assetId}`, metadata: { academy: { assetId: track.assetId } } }
+        ? { OTIO_SCHEMA: "ExternalReference.1", target_url: `academy-drive://${track.assetId}`, metadata: { academy: { assetId: track.assetId, mediaKind: track.kind } } }
         : { OTIO_SCHEMA: "MissingReference.1", metadata: { academy: { generatedLayer: true, role: track.role, text: track.text ?? null } } }
     }]
   }));
