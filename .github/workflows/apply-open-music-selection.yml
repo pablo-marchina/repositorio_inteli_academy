@@ -18,6 +18,26 @@ jobs:
           fetch-depth: 0
       - name: Apply refactor
         run: python3 .github/open-music-patch.py
+      - name: Clean refactor lint residues
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('lib/studio-reel-analysis.ts')
+          text = path.read_text()
+          text, count = re.subn(r'\nconst musicSchema = z\.object\(\{.*?\n\}\);\n\nconst musicDirectionSchema', '\nconst musicDirectionSchema', text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'expected to remove one unused musicSchema, removed {count}')
+          path.write_text(text)
+
+          path = Path('lib/studio.ts')
+          text = path.read_text()
+          text = text.replace('import { getDriveAsset, listDriveMedia } from "@/lib/google-drive";', 'import { getDriveAsset } from "@/lib/google-drive";', 1)
+          text = text.replace('  let driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]).filter((asset) => !asset.mimeType.startsWith("audio/")) : [];', '  const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]).filter((asset) => !asset.mimeType.startsWith("audio/")) : [];', 1)
+          path.write_text(text)
+          PY
       - uses: actions/setup-node@v5
         with:
           node-version: 22
