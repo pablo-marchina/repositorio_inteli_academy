@@ -25,7 +25,9 @@ function runFfmpeg(args: string[], allowFailure = false) {
   return new Promise<{ ok: boolean; stderr: string }>((resolve, reject) => {
     const child = spawn(executable(), args, { stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
-    child.stderr.on("data", (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-12000); });
+    child.stderr.on("data", (chunk) => {
+      stderr = `${stderr}${String(chunk)}`.slice(-12000);
+    });
     child.on("error", reject);
     child.on("close", (code) => {
       const ok = code === 0;
@@ -40,6 +42,10 @@ function assetExtension(asset: DriveAsset) {
   if (existing) return existing;
   if (asset.mimeType.includes("quicktime")) return ".mov";
   if (asset.mimeType.startsWith("video/")) return ".mp4";
+  if (asset.mimeType === "image/jpeg") return ".jpg";
+  if (asset.mimeType === "image/png") return ".png";
+  if (asset.mimeType === "image/webp") return ".webp";
+  if (asset.mimeType.startsWith("image/")) return ".img";
   if (asset.mimeType.includes("mpeg")) return ".mp3";
   if (asset.mimeType.startsWith("audio/")) return ".m4a";
   return ".bin";
@@ -68,21 +74,40 @@ async function ensureBucket() {
   }
 }
 
-type LayerInput = { role: string; file: string; x: number; y: number; width: number; height: number; start: number; duration: number };
+type LayerInput = {
+  role: string;
+  file: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  start: number;
+  duration: number;
+};
 
 async function downloadFigmaLayers(payload: StructuredStudioPayload, frameId: string, dir: string) {
   const [semantic] = await getCurrentFigmaSemanticState([frameId]);
   const timeline = payload.artifact!.videoTimeline!;
   const roles = ["decoration", "logo", "eyebrow", "headline", "body"];
-  const requests: Array<{ role: string; id: string; item: (typeof semantic.roles)[string][number]; start: number; duration: number }> = [];
+  const requests: Array<{
+    role: string;
+    id: string;
+    item: (typeof semantic.roles)[string][number];
+    start: number;
+    duration: number;
+  }> = [];
+
   for (const role of roles) {
-    const window = ["eyebrow", "headline", "body"].includes(role) ? mediaTrackWindow(payload, role) : { start: 0, duration: timeline.durationInFrames / timeline.fps };
+    const window = ["eyebrow", "headline", "body"].includes(role)
+      ? mediaTrackWindow(payload, role)
+      : { start: 0, duration: timeline.durationInFrames / timeline.fps };
     if (!window) continue;
     for (const item of semantic.roles[role] ?? []) {
       if (!item.id || !item.box || item.box.width < 1 || item.box.height < 1) continue;
       requests.push({ role, id: item.id, item, start: window.start, duration: window.duration });
     }
   }
+
   if (!requests.length) return { semantic, layers: [] as LayerInput[] };
   const urls = await getCurrentFigmaRenderUrls(requests.map((request) => request.id), "png");
   const layers: LayerInput[] = [];
@@ -94,14 +119,21 @@ async function downloadFigmaLayers(payload: StructuredStudioPayload, frameId: st
     const box = requests[index].item.box!;
     const scaleX = WIDTH / Math.max(1, semantic.frameBox?.width ?? WIDTH);
     const scaleY = HEIGHT / Math.max(1, semantic.frameBox?.height ?? HEIGHT);
-    layers.push({ role: requests[index].role, file, x: box.x * scaleX, y: box.y * scaleY, width: box.width * scaleX, height: box.height * scaleY, start: requests[index].start, duration: requests[index].duration });
+    layers.push({
+      role: requests[index].role,
+      file,
+      x: box.x * scaleX,
+      y: box.y * scaleY,
+      width: box.width * scaleX,
+      height: box.height * scaleY,
+      start: requests[index].start,
+      duration: requests[index].duration
+    });
   }
   return { semantic, layers };
 }
 
-function videoFilter(track: StudioVideoTrack, inputIndex: number, fps: number, output: string) {
-  const start = (track.sourceStartFrame ?? 0) / fps;
-  const end = (track.sourceEndFrame ?? ((track.sourceStartFrame ?? 0) + track.durationInFrames)) / fps;
+function visualFilter(track: StudioVideoTrack, inputIndex: number, fps: number, output: string) {
   const duration = Math.max(.001, track.durationInFrames / fps);
   const crop = track.crop ?? { focalX: .5, focalY: .5, endFocalX: .5, endFocalY: .5, zoom: 1 };
   const startX = Math.min(1, Math.max(0, crop.focalX));
@@ -115,13 +147,25 @@ function videoFilter(track: StudioVideoTrack, inputIndex: number, fps: number, o
   const scaleHeight = `if(gt(a,0.5625),trunc(1920*${zoom.toFixed(4)}/2)*2,trunc(1080/a*${zoom.toFixed(4)}/2)*2)`;
   const x = `(iw-${WIDTH})*(${startX.toFixed(5)}+${dx.toFixed(5)}*t/${duration.toFixed(5)})`;
   const y = `(ih-${HEIGHT})*(${startY.toFixed(5)}+${dy.toFixed(5)}*t/${duration.toFixed(5)})`;
-  return `[${inputIndex}:v]trim=start=${start.toFixed(4)}:end=${end.toFixed(4)},setpts=PTS-STARTPTS,scale='${scaleWidth}':'${scaleHeight}',crop=${WIDTH}:${HEIGHT}:'${x}':'${y}',fps=${fps},setsar=1,format=yuv420p[${output}]`;
+  const timing = track.kind === "image"
+    ? `trim=duration=${duration.toFixed(4)},setpts=PTS-STARTPTS`
+    : `trim=start=${((track.sourceStartFrame ?? 0) / fps).toFixed(4)}:end=${((track.sourceEndFrame ?? ((track.sourceStartFrame ?? 0) + track.durationInFrames)) / fps).toFixed(4)},setpts=PTS-STARTPTS`;
+  return `[${inputIndex}:v]${timing},scale='${scaleWidth}':'${scaleHeight}',crop=${WIDTH}:${HEIGHT}:'${x}':'${y}',fps=${fps},setsar=1,format=yuv420p[${output}]`;
 }
 
-async function renderWithFfmpeg(input: { payload: StructuredStudioPayload; driveAssets: DriveAsset[]; frameId: string; dir: string; output: string }) {
+async function renderWithFfmpeg(input: {
+  payload: StructuredStudioPayload;
+  driveAssets: DriveAsset[];
+  frameId: string;
+  dir: string;
+  output: string;
+}) {
   const timeline = input.payload.artifact!.videoTimeline!;
-  const footage = timeline.tracks.filter((track) => track.role === "footage" && track.assetId).sort((a, b) => a.startFrame - b.startFrame);
-  if (footage.length < 2) throw new Error("Render final recusado: timeline não possui montagem multi-clip.");
+  const footage = timeline.tracks
+    .filter((track) => track.role === "footage" && track.assetId)
+    .sort((a, b) => a.startFrame - b.startFrame);
+  if (!footage.length) throw new Error("Render final recusado: timeline não possui nenhum shot visual executável.");
+
   const byId = new Map(input.driveAssets.map((asset) => [asset.id, asset]));
   const local = new Map<string, string>();
   const needed = [...new Set(timeline.tracks.flatMap((track) => track.assetId ? [track.assetId] : []))];
@@ -129,7 +173,6 @@ async function renderWithFfmpeg(input: { payload: StructuredStudioPayload; drive
     const asset = byId.get(id);
     if (!asset) throw new Error(`Asset ${id} não existe mais no projeto.`);
     const downloaded = await downloadDriveAsset(id);
-    // The path is created in a runtime tmp directory. It is not a build-time filesystem dependency.
     const file = join(/* turbopackIgnore: true */ input.dir, `${id.replace(/[^a-zA-Z0-9_-]/g, "_")}${assetExtension(asset)}`);
     await writeFile(file, downloaded.bytes);
     local.set(id, file);
@@ -138,17 +181,24 @@ async function renderWithFfmpeg(input: { payload: StructuredStudioPayload; drive
   const { layers } = await downloadFigmaLayers(input.payload, input.frameId, input.dir);
   const args: string[] = ["-y", "-hide_banner", "-loglevel", "error"];
   const mediaInputIndices: number[] = [];
+  let nextInput = 0;
   for (const track of footage) {
-    mediaInputIndices.push(mediaInputIndices.length);
-    args.push("-i", local.get(track.assetId!)!);
+    mediaInputIndices.push(nextInput++);
+    const file = local.get(track.assetId!)!;
+    if (track.kind === "image") {
+      args.push("-loop", "1", "-framerate", String(timeline.fps), "-i", file);
+    } else {
+      args.push("-i", file);
+    }
   }
-  let nextInput = footage.length;
+
   const music = timeline.tracks.find((track) => track.role === "music" && track.assetId);
   let musicInput: number | null = null;
   if (music?.assetId) {
     musicInput = nextInput++;
     args.push("-stream_loop", "-1", "-i", local.get(music.assetId)!);
   }
+
   const layerInputIndices: number[] = [];
   for (const layer of layers) {
     layerInputIndices.push(nextInput++);
@@ -156,24 +206,36 @@ async function renderWithFfmpeg(input: { payload: StructuredStudioPayload; drive
   }
 
   const filters: string[] = [];
-  footage.forEach((track, index) => filters.push(videoFilter(track, mediaInputIndices[index], timeline.fps, `shotv${index}`)));
-  filters.push(`${footage.map((_, index) => `[shotv${index}]`).join("")}concat=n=${footage.length}:v=1:a=0[vcuts]`);
+  footage.forEach((track, index) => {
+    filters.push(visualFilter(track, mediaInputIndices[index], timeline.fps, `shotv${index}`));
+  });
+  if (footage.length === 1) {
+    filters.push("[shotv0]null[vcuts]");
+  } else {
+    filters.push(`${footage.map((_, index) => `[shotv${index}]`).join("")}concat=n=${footage.length}:v=1:a=0[vcuts]`);
+  }
 
   const total = timeline.durationInFrames / timeline.fps;
   if (music && musicInput !== null) {
     const sourceStart = (music.sourceStartFrame ?? 0) / timeline.fps;
     filters.push(`[${musicInput}:a]atrim=start=${sourceStart.toFixed(4)}:duration=${total.toFixed(4)},asetpts=PTS-STARTPTS,aresample=48000,volume=${(music.volume ?? .6).toFixed(3)}[aout]`);
   } else {
-    const audioFlags = await Promise.all(footage.map((track) => hasAudio(local.get(track.assetId!)!)));
-    if (!audioFlags.some(Boolean)) throw new Error("Os vídeos selecionados não possuem áudio. Selecione uma faixa de áudio no Drive antes de renderizar o Reel final.");
+    const audioFlags = await Promise.all(footage.map((track) => track.kind === "image" ? Promise.resolve(false) : hasAudio(local.get(track.assetId!)!)));
+    if (!audioFlags.some(Boolean)) {
+      throw new Error("Os visuais selecionados não fornecem áudio. Selecione uma faixa de áudio no Drive antes de renderizar o Reel final.");
+    }
     footage.forEach((track, index) => {
       const shotDuration = track.durationInFrames / timeline.fps;
       const sourceStart = (track.sourceStartFrame ?? 0) / timeline.fps;
       const sourceEnd = sourceStart + shotDuration;
-      if (audioFlags[index]) filters.push(`[${mediaInputIndices[index]}:a]atrim=start=${sourceStart.toFixed(4)}:end=${sourceEnd.toFixed(4)},asetpts=PTS-STARTPTS,aresample=48000,volume=${(track.volume ?? .72).toFixed(3)}[shota${index}]`);
-      else filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${shotDuration.toFixed(4)},asetpts=PTS-STARTPTS[shota${index}]`);
+      if (audioFlags[index]) {
+        filters.push(`[${mediaInputIndices[index]}:a]atrim=start=${sourceStart.toFixed(4)}:end=${sourceEnd.toFixed(4)},asetpts=PTS-STARTPTS,aresample=48000,volume=${(track.volume ?? .72).toFixed(3)}[shota${index}]`);
+      } else {
+        filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${shotDuration.toFixed(4)},asetpts=PTS-STARTPTS[shota${index}]`);
+      }
     });
-    filters.push(`${footage.map((_, index) => `[shota${index}]`).join("")}concat=n=${footage.length}:v=0:a=1[aout]`);
+    if (footage.length === 1) filters.push("[shota0]anull[aout]");
+    else filters.push(`${footage.map((_, index) => `[shota${index}]`).join("")}concat=n=${footage.length}:v=0:a=1[aout]`);
   }
 
   let videoLabel = "vcuts";
@@ -193,7 +255,21 @@ async function renderWithFfmpeg(input: { payload: StructuredStudioPayload; drive
     videoLabel = next;
   });
 
-  args.push("-filter_complex", filters.join(";"), "-map", `[${videoLabel}]`, "-map", "[aout]", "-r", String(timeline.fps), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-t", total.toFixed(4), input.output);
+  args.push(
+    "-filter_complex", filters.join(";"),
+    "-map", `[${videoLabel}]`,
+    "-map", "[aout]",
+    "-r", String(timeline.fps),
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "20",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "aac",
+    "-b:a", "192k",
+    "-movflags", "+faststart",
+    "-t", total.toFixed(4),
+    input.output
+  );
   await runFfmpeg(args);
 }
 
@@ -216,23 +292,50 @@ async function uploadRender(projectId: string, versionId: string, output: string
   const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   const storagePath = `reels/${projectId}/${versionId}/${sha256.slice(0, 20)}.mp4`;
   const admin = createAdminClient();
-  const uploaded = await admin.storage.from(RENDER_BUCKET).upload(storagePath, bytes, { contentType: "video/mp4", cacheControl: "3600", upsert: true });
+  const uploaded = await admin.storage.from(RENDER_BUCKET).upload(storagePath, bytes, {
+    contentType: "video/mp4",
+    cacheControl: "3600",
+    upsert: true
+  });
   if (uploaded.error) throw uploaded.error;
   const publicUrl = admin.storage.from(RENDER_BUCKET).getPublicUrl(storagePath).data.publicUrl;
-  return { storagePath, publicUrl, renderedAt: new Date().toISOString(), sha256, byteSize: bytes.byteLength, durationSeconds: duration, figmaVersion };
+  return {
+    storagePath,
+    publicUrl,
+    renderedAt: new Date().toISOString(),
+    sha256,
+    byteSize: bytes.byteLength,
+    durationSeconds: duration,
+    figmaVersion
+  };
 }
 
-export async function renderFinalStudioReel(input: { projectId: string; versionId: string; payload: StructuredStudioPayload; driveAssets: DriveAsset[]; frameId: string }) {
+export async function renderFinalStudioReel(input: {
+  projectId: string;
+  versionId: string;
+  payload: StructuredStudioPayload;
+  driveAssets: DriveAsset[];
+  frameId: string;
+}) {
   const timeline = input.payload.artifact?.videoTimeline;
-  if (input.payload.contentType !== "reel" || !timeline || timeline.schemaVersion !== 2) throw new Error("Esta versão não possui timeline v2 de Reel.");
+  if (input.payload.contentType !== "reel" || !timeline || timeline.schemaVersion !== 2) {
+    throw new Error("Esta versão não possui timeline v2 de Reel.");
+  }
   if (!input.payload.artifact?.reelQuality?.passed) throw new Error("A timeline não passou pelo QA estrutural.");
   if (!input.payload.artifact.figmaVideoLayout) throw new Error("Sincronize a versão com o Figma antes do render final.");
+
   const nodePayload = await getCurrentFigmaNodes([input.frameId]);
   const figmaVersion = nodePayload.version ?? null;
   const dir = await mkdtemp(join(tmpdir(), "academy-reel-"));
   try {
     const output = join(dir, "final.mp4");
-    await renderWithFfmpeg({ payload: input.payload, driveAssets: input.driveAssets, frameId: input.frameId, dir, output });
+    await renderWithFfmpeg({
+      payload: input.payload,
+      driveAssets: input.driveAssets,
+      frameId: input.frameId,
+      dir,
+      output
+    });
     const duration = timeline.durationInFrames / timeline.fps;
     const qaFrames = await extractQaFrames(output, duration, dir);
     const [figmaReferenceUrl] = await getCurrentFigmaRenderUrls([input.frameId], "png");
