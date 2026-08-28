@@ -18,7 +18,7 @@ function Score({ title, report }: { title: string; report: StudioBrandReport }) 
   </div>;
 }
 
-export function StructuredStudioPanel({ projectId, driveAssets, versions, initialVersionId }: { projectId: string; driveAssets: DriveAsset[]; versions: StructuredVersion[]; initialVersionId?: string | null }) {
+export function StructuredStudioPanel({ projectId, driveAssets, versions, initialVersionId, referenceMediaUrl }: { projectId: string; driveAssets: DriveAsset[]; versions: StructuredVersion[]; initialVersionId?: string | null; referenceMediaUrl?: string | null }) {
   const candidates = versions.filter((version) => Boolean(version.payload.artifact));
   const [versionId, setVersionId] = useState(initialVersionId && candidates.some((version) => version.id === initialVersionId) ? initialVersionId : candidates[0]?.id ?? "");
   const selected = useMemo(() => candidates.find((version) => version.id === versionId) ?? candidates[0], [candidates, versionId]);
@@ -42,8 +42,8 @@ export function StructuredStudioPanel({ projectId, driveAssets, versions, initia
     </div>
     <div style={{ marginTop: 14, fontSize: 13, opacity: .78 }}><strong>Origem dos frames:</strong> {artifact.sceneGraph.frames.map((frame) => frame.sourceFigmaFrameId ? `base humana ${frame.sourceFigmaFrameId}` : frame.figmaTemplateNodeId ? `template ${frame.figmaTemplateNodeId}` : frame.preferredTemplateNames[0]).join(" · ")}</div>
     {artifact.videoTimeline ? <div style={{ marginTop: 22, display: "grid", gap: 14 }}>
-      <div><h3>Timeline de vídeo editável</h3><p>Footage, áudio, texto e gráficos são tracks independentes. Após o Figma, o servidor codifica o MP4 final e o QA analisa frames extraídos desse arquivo — o mesmo URL usado na publicação.</p></div>
-      <StudioVideoPreview payload={selected.payload} timeline={artifact.videoTimeline} driveAssets={driveAssets} figmaLayout={artifact.figmaVideoLayout} projectId={projectId} versionId={selected.id} initialRenderQa={artifact.renderQa} initialRenderedReel={artifact.renderedReel} />
+      <div><h3>Timeline de vídeo editável</h3><p>Footage, áudio, texto e gráficos são tracks independentes. A revisão visual mostra a referência ao lado de um MP4 técnico único da timeline; após o Figma, o servidor codifica o MP4 final e executa o QA.</p></div>
+      <StudioVideoPreview payload={selected.payload} timeline={artifact.videoTimeline} driveAssets={driveAssets} figmaLayout={artifact.figmaVideoLayout} projectId={projectId} versionId={selected.id} referenceMediaUrl={referenceMediaUrl} initialRenderQa={artifact.renderQa} initialRenderedReel={artifact.renderedReel} />
       <div className={styles.actions}>
         {selected.figma_frame_ids.length ? <a className={styles.primary} href={afterEffectsUrl}>Baixar projeto editável · After Effects</a> : null}
         <a className={styles.secondary} href={`${exportBase}?format=otio`}>Baixar OTIO</a>
