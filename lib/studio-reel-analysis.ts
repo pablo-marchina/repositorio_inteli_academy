@@ -1,9 +1,18 @@
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import ffmpegPath from "ffmpeg-static";
 import { z } from "zod";
+import { decryptSecret } from "@/lib/crypto";
 import { env } from "@/lib/env";
 import { downloadDriveAsset } from "@/lib/google-drive";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { DriveAsset, InstagramReferencePost } from "@/lib/types";
 
 const MAX_INLINE_MEDIA_BYTES = 18_000_000;
+const MAX_REFERENCE_DOWNLOAD_BYTES = 120_000_000;
+const TARGET_REFERENCE_ANALYSIS_BYTES = 10_000_000;
 
 export type ReelReferenceTemporalAnalysis = {
   analysisMode: "video" | "cached" | "unavailable";
@@ -108,6 +117,140 @@ const musicSchema = z.object({
 function clamp(value: number, min: number, max: number) { return Math.min(max, Math.max(min, value)); }
 function mediaDuration(asset: DriveAsset) { return Math.max(0, Number(asset.durationMillis ?? 0) / 1000); }
 
+function ffmpegExecutable() {
+  if (!ffmpegPath) throw new Error("ffmpeg-static não disponibilizou um binário para analisar a referência do Reel.");
+  return ffmpegPath;
+}
+
+function runFfmpeg(args: string[]) {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(ffmpegExecutable(), args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-10000); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`FFmpeg falhou ao preparar referência (${code}): ${stderr.slice(-4000)}`));
+    });
+  });
+}
+
+async function refreshReferenceMediaUrl(reference: InstagramReferencePost) {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("instagram_accounts")
+      .select("access_token_encrypted")
+      .eq("is_active", true)
+      .order("connected_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data?.access_token_encrypted) return reference.mediaUrl;
+
+    const values = env();
+    const token = decryptSecret(String(data.access_token_encrypted));
+    const url = new URL(`https://graph.instagram.com/${values.META_GRAPH_VERSION}/${encodeURIComponent(reference.id)}`);
+    url.searchParams.set("fields", "media_url,thumbnail_url,media_type,media_product_type");
+    url.searchParams.set("access_token", token);
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) return reference.mediaUrl;
+
+    const payload = (await response.json()) as { media_url?: string; thumbnail_url?: string; media_type?: string; media_product_type?: string };
+    if (!payload.media_url) return reference.mediaUrl;
+
+    reference.mediaUrl = payload.media_url;
+    if (payload.thumbnail_url) reference.thumbnailUrl = payload.thumbnail_url;
+    await admin.from("instagram_reference_posts").update({
+      media_url: payload.media_url,
+      thumbnail_url: payload.thumbnail_url ?? reference.thumbnailUrl ?? null,
+      media_type: payload.media_type ?? reference.mediaType,
+      media_product_type: payload.media_product_type ?? reference.mediaProductType,
+      synced_at: new Date().toISOString()
+    }).eq("id", reference.id);
+    return payload.media_url;
+  } catch {
+    return reference.mediaUrl;
+  }
+}
+
+async function fetchReferenceVideo(reference: InstagramReferencePost) {
+  async function attempt(url: string | null | undefined) {
+    if (!url) return null;
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) return null;
+    const declaredSize = Number(response.headers.get("content-length") ?? 0);
+    if (declaredSize > MAX_REFERENCE_DOWNLOAD_BYTES) return null;
+    const mimeType = response.headers.get("content-type")?.split(";")[0] || "video/mp4";
+    if (!mimeType.startsWith("video/")) return null;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > MAX_REFERENCE_DOWNLOAD_BYTES) return null;
+    return { bytes, mimeType };
+  }
+
+  const cached = await attempt(reference.mediaUrl);
+  if (cached) return { ...cached, refreshed: false };
+  const refreshedUrl = await refreshReferenceMediaUrl(reference);
+  const refreshed = await attempt(refreshedUrl);
+  return refreshed ? { ...refreshed, refreshed: true } : null;
+}
+
+async function prepareReferenceVideo(bytes: Uint8Array, mimeType: string) {
+  if (bytes.byteLength <= TARGET_REFERENCE_ANALYSIS_BYTES && mimeType === "video/mp4") {
+    return { bytes, mimeType, transcoded: false };
+  }
+
+  const dir = await mkdtemp(join(tmpdir(), "academy-reel-reference-"));
+  const input = join(dir, "input-video");
+  const output = join(dir, "analysis.mp4");
+  try {
+    await writeFile(input, bytes);
+    await runFfmpeg([
+      "-y",
+      "-i", input,
+      "-map", "0:v:0",
+      "-map", "0:a?",
+      "-vf", "scale=480:-2:flags=lanczos,fps=10",
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-b:v", "420k",
+      "-maxrate", "520k",
+      "-bufsize", "1040k",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "48k",
+      "-ac", "1",
+      "-movflags", "+faststart",
+      output
+    ]);
+    let compact = new Uint8Array(await readFile(output));
+    if (compact.byteLength > MAX_INLINE_MEDIA_BYTES) {
+      await runFfmpeg([
+        "-y",
+        "-i", input,
+        "-map", "0:v:0",
+        "-map", "0:a?",
+        "-vf", "scale=360:-2:flags=lanczos,fps=8",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-b:v", "260k",
+        "-maxrate", "320k",
+        "-bufsize", "640k",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "40k",
+        "-ac", "1",
+        "-movflags", "+faststart",
+        output
+      ]);
+      compact = new Uint8Array(await readFile(output));
+    }
+    if (compact.byteLength > MAX_INLINE_MEDIA_BYTES) return null;
+    return { bytes: compact, mimeType: "video/mp4", transcoded: true };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function geminiMediaJson<T>(bytes: Uint8Array, mimeType: string, prompt: string, schema: z.ZodType<T>): Promise<T | null> {
   const config = env();
   if (!config.GEMINI_API_KEY || bytes.byteLength > MAX_INLINE_MEDIA_BYTES) return null;
@@ -117,7 +260,10 @@ async function geminiMediaJson<T>(bytes: Uint8Array, mimeType: string, prompt: s
     body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType, data: Buffer.from(bytes).toString("base64") } }] }], generationConfig: { responseMimeType: "application/json" } }),
     cache: "no-store"
   });
-  if (!response.ok) return null;
+  if (!response.ok) {
+    console.warn("[reel-reference] Gemini media analysis failed", { status: response.status, body: (await response.text()).slice(0, 800) });
+    return null;
+  }
   const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
   const raw = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
   if (!raw) return null;
@@ -145,16 +291,22 @@ export async function analyzeInstagramReelReference(reference: InstagramReferenc
     if (parsed.success) return { ...normalizeReference(parsed.data), analysisMode: "cached" };
   }
   const isVideo = reference.mediaType === "VIDEO" || reference.mediaProductType === "REELS" || reference.mediaProductType === "REEL";
-  if (!isVideo || !reference.mediaUrl) return null;
-  const response = await fetch(reference.mediaUrl, { cache: "no-store" });
-  if (!response.ok) return null;
-  const declaredSize = Number(response.headers.get("content-length") ?? 0);
-  if (declaredSize > MAX_INLINE_MEDIA_BYTES) return null;
-  const mimeType = response.headers.get("content-type")?.split(";")[0] || "video/mp4";
-  if (!mimeType.startsWith("video/")) return null;
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > MAX_INLINE_MEDIA_BYTES) return null;
-  const analysis = await geminiMediaJson(bytes, mimeType,
+  if (!isVideo) return null;
+
+  const downloaded = await fetchReferenceVideo(reference);
+  if (!downloaded) return null;
+  const prepared = await prepareReferenceVideo(downloaded.bytes, downloaded.mimeType);
+  if (!prepared) return null;
+
+  console.info("[reel-reference] temporal media prepared", {
+    mediaId: reference.id,
+    originalBytes: downloaded.bytes.byteLength,
+    analysisBytes: prepared.bytes.byteLength,
+    refreshedUrl: downloaded.refreshed,
+    transcoded: prepared.transcoded
+  });
+
+  const analysis = await geminiMediaJson(prepared.bytes, prepared.mimeType,
     "Analise temporalmente este Reel REAL da Inteli Academy como referência de edição, sem identificar pessoas. Retorne JSON com duração, cortes/shot boundaries, ritmo, movimento, energia, transições, ponto focal x/y normalizado, batidas ou acentos audíveis aproximados e janelas de texto. Seja específico em segundos. O objetivo é reproduzir a linguagem de montagem, não copiar conteúdo.", temporalSchema);
   return analysis ? normalizeReference(analysis) : null;
 }
@@ -325,7 +477,7 @@ export async function analyzeAndPlanReel(assets: DriveAsset[], references: Insta
     analyzeDriveFootage(assets),
     musicAsset ? analyzeMusicAsset(musicAsset) : Promise.resolve(null)
   ]);
-  if (selectedReel && !reference) throw new Error("A referência de Reel selecionada não pôde ser analisada temporalmente. Sincronize novamente o Instagram ou escolha outra referência; o sistema não vai fingir fidelidade sem ler o vídeo.");
+  if (selectedReel && !reference) throw new Error("A referência de Reel selecionada não pôde ser analisada temporalmente mesmo após atualizar a mídia e gerar um proxy leve para análise. Tente novamente ou escolha outra referência.");
   if (musicAsset && !music) throw new Error("A faixa de áudio selecionada não pôde ser analisada para detectar beats. Escolha outra faixa ou gere sem música dedicada; o sistema não vai fingir edição no beat.");
   return buildReelEditingPlan({ assets, footage, reference, music });
 }
