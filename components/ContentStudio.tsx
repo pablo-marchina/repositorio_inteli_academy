@@ -213,11 +213,11 @@ export function ContentStudio({ articles, initialReferences, driveConnected }: {
       </section>
 
       <section className={styles.section}>
-        <div className={styles.toolbar}><div><h2>6. Mídia editorial do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} vídeos/fotos de conteúdo. A IA escolhe automaticamente a trilha entre os áudios autorizados disponíveis no Drive, analisa BPM/beats e usa isso para montar os cortes. Logos selecionadas acima ficam fora deste pool.` : `O sistema só pode usar os arquivos editoriais que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => void enableDrive(event.target.checked)} /> Usar Drive</label></div>
+        <div className={styles.toolbar}><div><h2>6. Mídia editorial do Drive <small>(opcional)</small></h2><p>{contentType === "reel" ? `Selecione até ${MAX_STUDIO_DRIVE_ASSETS} vídeos/fotos de conteúdo. A IA escolhe livremente a trilha musical fora do Drive, define o trecho/BPM e usa essa direção para montar os cortes. Logos selecionadas acima ficam fora deste pool.` : `O sistema só pode usar os arquivos editoriais que você selecionar, até ${MAX_STUDIO_DRIVE_ASSETS} mídias por geração.`}</p></div><label className={styles.driveToggle}><input type="checkbox" checked={useDrive} disabled={!driveConnected} onChange={(event) => void enableDrive(event.target.checked)} /> Usar Drive</label></div>
         {!driveConnected ? <p><a href="/api/drive/connect">Conecte o Google Drive em Configurações</a> para habilitar a biblioteca.</p> : null}
         {loadingDrive ? <p>Carregando biblioteca de mídia…</p> : null}
         {useDrive && !loadingDrive ? <>
-          <span className={styles.count}>{selectedAssets.length}/{MAX_STUDIO_DRIVE_ASSETS} selecionados · {contentType === "reel" ? `${selectedVideoCount} vídeo(s) · ${selectedImageCount} foto(s) · trilha escolhida pela IA` : "imagens"}</span>
+          <span className={styles.count}>{selectedAssets.length}/{MAX_STUDIO_DRIVE_ASSETS} selecionados · {contentType === "reel" ? `${selectedVideoCount} vídeo(s) · ${selectedImageCount} foto(s) · trilha escolhida livremente pela IA` : "imagens"}</span>
           <div className={styles.mediaGrid}>{compatibleAssets.filter((asset) => asset.id !== partnerLogoAssetId).map((asset) => {
             const isVideo = asset.mimeType.startsWith("video/");
             const isImage = asset.mimeType.startsWith("image/");

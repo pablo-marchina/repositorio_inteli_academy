@@ -1,5 +1,5 @@
 import type { DriveAsset, StudioFrame, StudioPayload } from "@/lib/types";
-import { buildReelEditingPlan, type FootageAnalysis, type ReelEditingPlan } from "@/lib/studio-reel-analysis";
+import { buildReelEditingPlan, type FootageAnalysis, type MusicDirection, type ReelEditingPlan } from "@/lib/studio-reel-analysis";
 import { effectivePostArchetype, requiresPartnerBrand } from "@/lib/studio-post-archetype";
 
 export type StudioSemanticRole = "eyebrow" | "headline" | "body" | "stat" | "statLabel" | "bullets" | "media" | "logo" | "primaryLogo" | "partnerLogo" | "brandElement" | "mascot" | "pagination" | "decoration" | "background";
@@ -67,6 +67,7 @@ export type StudioVideoTrack = {
   transitionDurationInFrames?: number;
   volume?: number;
   muted?: boolean;
+  musicDirection?: MusicDirection;
 };
 
 export type StudioFigmaVideoLayout = {
@@ -85,7 +86,7 @@ export type StudioFigmaVideoLayout = {
 };
 
 export type StudioVideoTimeline = {
-  schemaVersion: 1 | 2 | 3;
+  schemaVersion: 1 | 2 | 3 | 4;
   engine: "remotion";
   interchange: "opentimelineio";
   fps: number;
@@ -262,7 +263,7 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
       editable: true,
       assetId: shot.assetId,
       muted: image ? true : Boolean(plan.musicAssetId),
-      volume: image || plan.musicAssetId ? 0 : .72
+      volume: image || plan.musicAssetId ? 0 : plan.musicDirection ? .18 : .72
     } satisfies StudioVideoTrack;
   });
 
@@ -295,14 +296,20 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
   if (payload.brandContext?.partnerLogoAssetId) {
     tracks.push({ id: "graphic-partner-logo", name: `V7 · Partner logo · ${payload.brandContext.partnerName ?? "Figma"}`, kind: "graphic", role: "partnerLogo", startFrame: 0, durationInFrames, zIndex: 49, editable: true, assetId: payload.brandContext.partnerLogoAssetId });
   }
-  if (plan.musicAssetId) {
-    tracks.push({ id: "audio-music", name: `A1 · Música · ${byId.get(plan.musicAssetId)?.name ?? plan.musicAssetId}`, kind: "audio", role: "music", startFrame: 0, durationInFrames, sourceStartFrame: 0, zIndex: -10, editable: true, assetId: plan.musicAssetId, volume: .6 });
+  if (plan.musicDirection) {
+    tracks.push({ id: "audio-music", name: `A1 · Música · ${plan.musicDirection.artist} — ${plan.musicDirection.title}`, kind: "audio", role: "music", startFrame: 0, durationInFrames, sourceStartFrame: Math.max(0, Math.round(plan.musicDirection.startOffsetSeconds * fps)), zIndex: -10, editable: true, musicDirection: plan.musicDirection, volume: .65 });
+  } else if (plan.musicAssetId) {
+    tracks.push({ id: "audio-music", name: `A1 · Música legada · ${byId.get(plan.musicAssetId)?.name ?? plan.musicAssetId}`, kind: "audio", role: "music", startFrame: 0, durationInFrames, sourceStartFrame: 0, zIndex: -10, editable: true, assetId: plan.musicAssetId, volume: .6 });
   }
 
   const used = [...new Set(plan.shots.map((shot) => shot.assetId))].map((id) => byId.get(id)).filter(Boolean) as DriveAsset[];
   const videoCount = used.filter((asset) => asset.mimeType.startsWith("video/")).length;
   const imageCount = used.filter((asset) => asset.mimeType.startsWith("image/")).length;
-  const audioLabel = plan.musicAssetId ? `música escolhida pela IA e analisada${plan.musicSelectionReason ? ` (${plan.musicSelectionReason})` : ""}` : "áudio natural dos takes; nenhuma faixa autorizada ficou disponível para seleção automática";
+  const audioLabel = plan.musicDirection
+    ? `trilha escolhida livremente pela IA: ${plan.musicDirection.artist} — ${plan.musicDirection.title}, ${plan.musicDirection.bpm} BPM, trecho ${plan.musicDirection.section}`
+    : plan.musicAssetId
+      ? `música legada baseada em asset local${plan.musicSelectionReason ? ` (${plan.musicSelectionReason})` : ""}`
+      : "áudio natural dos takes";
   const structureLabel = plan.reference
     ? `${plan.reference.shots.length} shots ${plan.reference.semanticAvailable === false ? "temporais" : "semânticos"} herdados da referência`
     : `${plan.shots.length} shots estimados dinamicamente`;
@@ -311,7 +318,7 @@ function buildVideoTimeline(payload: StudioPayload, driveAssets: DriveAsset[], s
   const analysisLabel = localCount ? `${localCount} mídia(s) com análise local FFmpeg; semântica remota indisponível nesses casos` : "semântica visual remota disponível para a mídia usada";
   const executionSummary = `${structureLabel} · ${videoCount} vídeo(s) · ${imageCount} foto(s) · ${(durationInFrames / fps).toFixed(2)}s · ${audioLabel} · ${coverage} · ${analysisLabel}`;
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     engine: "remotion",
     interchange: "opentimelineio",
     fps,
@@ -381,10 +388,12 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
   const beatTolerance = Math.max(2, Math.round(.12 * timeline.fps));
   const alignedCuts = cutFrames.filter((cut) => beatFrames.some((beat) => Math.abs(beat - cut) <= beatTolerance)).length;
   const beatAlignmentRatio = cutFrames.length ? alignedCuts / cutFrames.length : 1;
-  const dedicatedMusicIsReal = !plan.musicAssetId || (plan.beatSource === "music" && plan.musicAnalysis?.assetId === plan.musicAssetId && plan.musicAnalysis.beatSeconds.length >= 3);
+  const dedicatedMusicTimingOk = plan.musicDirection
+    ? plan.beatSource === "music" && plan.musicAnalysis?.analysisMode === "ai-estimated" && plan.musicAnalysis.beatSeconds.length >= 3 && Math.abs((plan.musicAnalysis.bpm ?? 0) - plan.musicDirection.bpm) < .01
+    : !plan.musicAssetId || (plan.beatSource === "music" && plan.musicAnalysis?.assetId === plan.musicAssetId && plan.musicAnalysis.beatSeconds.length >= 3);
   const expectedShots = plan.reference?.shots.length ?? plan.shots.length;
   const shotCountMatches = footage.length === expectedShots && footage.length > 0 && footage.length <= 40;
-  const sourceAudioAvailable = Boolean(plan.musicAssetId) || plan.sourceAudio;
+  const sourceAudioAvailable = Boolean(plan.musicDirection || plan.musicAssetId) || plan.sourceAudio;
   const semanticRatio = semanticMatchRatio(plan);
   const semanticAvailable = semanticRatio !== null;
   const semanticReferenceOk = !plan.reference || semanticRatio === null || semanticRatio >= .55;
@@ -425,8 +434,8 @@ function reelTimelineQuality(payload: StudioPayload, timeline: StudioVideoTimeli
       detail: `${usedAssets.size}/${visuals.length} visuais selecionados usados; repetição semântica/visual é penalizada durante a seleção.`
     },
     { id: "source-bounds", label: "In/out respeitam a mídia fonte", passed: boundsOk, severity: "error", detail: "Vídeos são validados contra durationMillis do Drive; fotos são stills sem sourceOut temporal de vídeo." },
-    { id: "audio", label: "Reel possui áudio", passed: sourceAudioAvailable, severity: "error", detail: plan.musicAssetId ? "Track de música dedicada." : "Áudio natural dos takes permanece ativo; ele não é tratado como se estivesse sincronizado aos beats da referência." },
-    { id: "music-beats", label: "Música dedicada foi analisada de verdade", passed: dedicatedMusicIsReal, severity: "error", detail: plan.musicAssetId ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats detectados na faixa selecionada; fonte=${plan.beatSource}.` : "Sem música dedicada; beat-alignment é desativado para não gerar falso positivo com o áudio dos takes." },
+    { id: "audio", label: "Reel possui direção de áudio", passed: sourceAudioAvailable, severity: "error", detail: plan.musicDirection ? `IA escolheu ${plan.musicDirection.artist} — ${plan.musicDirection.title}; o arquivo deve ser resolvido em catálogo licenciado na etapa de publicação/edição final.` : plan.musicAssetId ? "Track musical legada baseada em asset." : "Áudio natural dos takes permanece ativo." },
+    { id: "music-beats", label: "Ritmo da trilha foi definido para a montagem", passed: dedicatedMusicTimingOk, severity: "error", detail: plan.musicDirection ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats estimados a partir de ${plan.musicDirection.bpm} BPM para dirigir os cortes; a waveform real será validada quando a faixa licenciada for resolvida.` : plan.musicAssetId ? `${plan.musicAnalysis?.beatSeconds.length ?? 0} beats detectados na faixa legada; fonte=${plan.beatSource}.` : "Sem música dedicada; beat-alignment é desativado." },
     { id: "beat-alignment", label: "Cortes acompanham a música quando existe música analisada", passed: plan.beatSource !== "music" || cutFrames.length <= 1 || beatFrames.length < 3 || beatAlignmentRatio >= .6, severity: "warning", detail: plan.beatSource === "music" ? `${alignedCuts}/${cutFrames.length} cortes internos estão a até ${(beatTolerance / timeline.fps).toFixed(2)}s de um beat da música.` : "Não há música dedicada analisada; este check não usa beats da referência para fingir sincronização do áudio final." },
     {
       id: "focal-tracking",

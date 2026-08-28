@@ -195,6 +195,7 @@ async function renderWithFfmpeg(input: {
   }
 
   const music = timeline.tracks.find((track) => track.role === "music" && track.assetId);
+  const externalMusic = timeline.tracks.find((track) => track.role === "music" && track.musicDirection);
   let musicInput: number | null = null;
   if (music?.assetId) {
     musicInput = nextInput++;
@@ -251,20 +252,27 @@ async function renderWithFfmpeg(input: {
   } else {
     const audioFlags = await Promise.all(footage.map((track) => track.kind === "image" ? Promise.resolve(false) : hasAudio(local.get(track.assetId!)!)));
     if (!audioFlags.some(Boolean)) {
-      throw new Error("Os visuais selecionados não fornecem áudio e a IA não encontrou uma trilha autorizada disponível no Drive para este Reel.");
+      if (!externalMusic?.musicDirection) throw new Error("Os visuais selecionados não fornecem áudio e não existe direção musical no plano do Reel.");
+      console.warn("[reel-render] AI-selected external music is not embedded without a licensed media source", {
+        title: externalMusic.musicDirection.title,
+        artist: externalMusic.musicDirection.artist,
+        searchQuery: externalMusic.musicDirection.searchQuery
+      });
+      filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${total.toFixed(4)},asetpts=PTS-STARTPTS[aout]`);
+    } else {
+      footage.forEach((track, index) => {
+        const shotDuration = track.durationInFrames / timeline.fps;
+        const sourceStart = (track.sourceStartFrame ?? 0) / timeline.fps;
+        const sourceEnd = sourceStart + shotDuration;
+        if (audioFlags[index]) {
+          filters.push(`[${mediaInputIndices[index]}:a]atrim=start=${sourceStart.toFixed(4)}:end=${sourceEnd.toFixed(4)},asetpts=PTS-STARTPTS,aresample=48000,volume=${(track.volume ?? .72).toFixed(3)}[shota${index}]`);
+        } else {
+          filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${shotDuration.toFixed(4)},asetpts=PTS-STARTPTS[shota${index}]`);
+        }
+      });
+      if (footage.length === 1) filters.push("[shota0]anull[aout]");
+      else filters.push(`${footage.map((_, index) => `[shota${index}]`).join("")}concat=n=${footage.length}:v=0:a=1[aout]`);
     }
-    footage.forEach((track, index) => {
-      const shotDuration = track.durationInFrames / timeline.fps;
-      const sourceStart = (track.sourceStartFrame ?? 0) / timeline.fps;
-      const sourceEnd = sourceStart + shotDuration;
-      if (audioFlags[index]) {
-        filters.push(`[${mediaInputIndices[index]}:a]atrim=start=${sourceStart.toFixed(4)}:end=${sourceEnd.toFixed(4)},asetpts=PTS-STARTPTS,aresample=48000,volume=${(track.volume ?? .72).toFixed(3)}[shota${index}]`);
-      } else {
-        filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${shotDuration.toFixed(4)},asetpts=PTS-STARTPTS[shota${index}]`);
-      }
-    });
-    if (footage.length === 1) filters.push("[shota0]anull[aout]");
-    else filters.push(`${footage.map((_, index) => `[shota${index}]`).join("")}concat=n=${footage.length}:v=0:a=1[aout]`);
   }
 
   let videoLabel = "vcuts";

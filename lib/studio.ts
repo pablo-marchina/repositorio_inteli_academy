@@ -2,7 +2,7 @@ import { z } from "zod";
 import { signPublicAsset } from "@/lib/crypto";
 import { env } from "@/lib/env";
 import { getCurrentFigmaRenderUrls, getCurrentFigmaSemanticState } from "@/lib/figma";
-import { getDriveAsset, listDriveMedia } from "@/lib/google-drive";
+import { getDriveAsset } from "@/lib/google-drive";
 import {
   fetchInstagramPermalink,
   listInstagramMedia,
@@ -198,8 +198,9 @@ async function loadDriveAssets(useDrive: boolean, driveAssetIds: string[]) {
 }
 
 function assertFormatMedia(contentType: StudioContentType, assets: DriveAsset[]) {
+  if (assets.some((asset) => asset.mimeType.startsWith("audio/"))) throw new Error("Áudio não é uma mídia editorial selecionável no Drive. A IA escolhe a trilha musical livremente para o Reel.");
   if (contentType === "reel" && !assets.some((asset) => asset.mimeType.startsWith("video/"))) throw new Error("Para gerar um Reel, selecione pelo menos um vídeo do Drive.");
-  if (contentType !== "reel" && assets.some((asset) => asset.mimeType.startsWith("video/") || asset.mimeType.startsWith("audio/"))) throw new Error("Vídeos e áudios do Drive são usados em Reels. Para post, carrossel ou Story selecione imagens.");
+  if (contentType !== "reel" && assets.some((asset) => asset.mimeType.startsWith("video/"))) throw new Error("Vídeos do Drive são usados em Reels. Para post, carrossel ou Story selecione imagens.");
 }
 
 function firstSemanticText(frame: Awaited<ReturnType<typeof getCurrentFigmaSemanticState>>[number] | undefined, role: string) {
@@ -225,10 +226,11 @@ function reusableReelPlan(payload: StructuredStudioPayload) {
   const plan = payload.artifact?.reelPlan;
   if (!plan) return undefined;
   const semanticVersion = plan.analysisSummary?.semanticVersion ?? 0;
-  const referenceIsCurrent = !plan.reference || (plan.reference.semanticVersion ?? 0) >= 3;
+  const referenceIsCurrent = !plan.reference || (plan.reference.semanticVersion ?? 0) >= 4;
   const analysisByAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
   const everyUsedShotWasAnalyzed = plan.shots.length > 0 && plan.shots.every((shot) => analysisByAsset.get(shot.assetId)?.analysisMode !== "metadata-fallback");
-  return semanticVersion >= 3 && referenceIsCurrent && everyUsedShotWasAnalyzed ? plan : undefined;
+  const musicIsCurrent = plan.musicSelectionMode === "ai-open-catalog" && Boolean(plan.musicDirection?.title && plan.musicDirection?.artist);
+  return semanticVersion >= 4 && referenceIsCurrent && everyUsedShotWasAnalyzed && musicIsCurrent ? plan : undefined;
 }
 
 function hasCurrentReelArtifact(payload: StructuredStudioPayload) {
@@ -239,23 +241,17 @@ function hasCurrentReelArtifact(payload: StructuredStudioPayload) {
 export async function createStudioProject(rawInput: unknown, userId: string) {
   const input = createSchema.parse(rawInput);
   const referenceIds = [...new Set([...input.instagramReferenceMediaIds, ...(input.instagramReferenceMediaId ? [input.instagramReferenceMediaId] : [])])].slice(0, MAX_STUDIO_REFERENCES);
-  const [articles, references, selectedDriveAssets, history, musicCatalog] = await Promise.all([
+  const [articles, references, selectedDriveAssets, history] = await Promise.all([
     loadArticles(input.articleIds),
     getReferences(referenceIds),
     loadDriveAssets(input.useDrive, input.driveAssetIds),
-    historicalInstagramGuidance(),
-    input.contentType === "reel" && input.useDrive
-      ? listDriveMedia().then((assets) => assets.filter((asset) => asset.mimeType.startsWith("audio/"))).catch(() => [] as DriveAsset[])
-      : Promise.resolve([] as DriveAsset[])
+    historicalInstagramGuidance()
   ]);
   assertFormatMedia(input.contentType, selectedDriveAssets);
   const reelPlan = input.contentType === "reel"
-    ? await analyzeAndPlanReel(selectedDriveAssets, references, { musicCandidates: musicCatalog, context: input.userContext })
+    ? await analyzeAndPlanReel(selectedDriveAssets, references, { context: input.userContext })
     : undefined;
-  const selectedMusic = reelPlan?.musicAssetId ? musicCatalog.find((asset) => asset.id === reelPlan.musicAssetId) : undefined;
-  const driveAssets = selectedMusic && !selectedDriveAssets.some((asset) => asset.id === selectedMusic.id)
-    ? [...selectedDriveAssets, selectedMusic]
-    : selectedDriveAssets;
+  const driveAssets = selectedDriveAssets;
   await cacheTemporalReference(references, reelPlan);
   const generated = await generateStudioPayload({ contentType: input.contentType, articles, userContext: input.userContext, driveAssets, references, historicalInstagramGuidance: history });
   const payload = compileStudioArtifact(generated, { driveAssets, reelPlan });
@@ -285,30 +281,26 @@ export async function createStudioRevision(projectId: string, baseVersionId: str
     try { current = mergeCurrentFigmaContent(parsedCurrent, await getCurrentFigmaSemanticState(baseFigmaFrameIds)); } catch { current = parsedCurrent; }
   }
   const articleIds = Array.isArray(project.article_ids) ? project.article_ids.map(String) : [];
-  const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : [];
+  const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]).filter((asset) => !asset.mimeType.startsWith("audio/")) : [];
   const referenceIds = Array.isArray(project.instagram_reference_media_ids) ? project.instagram_reference_media_ids.map(String).slice(0, MAX_STUDIO_REFERENCES) : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
-  const [articles, references, history, latest, musicCatalog] = await Promise.all([
+  const [articles, references, history, latest] = await Promise.all([
     loadArticles(articleIds),
     getReferences(referenceIds),
     historicalInstagramGuidance(),
-    admin.from("content_versions").select("version_number").eq("project_id", projectId).order("version_number", { ascending: false }).limit(1).single(),
-    parsedCurrent.contentType === "reel"
-      ? listDriveMedia().then((assets) => assets.filter((asset) => asset.mimeType.startsWith("audio/"))).catch(() => [] as DriveAsset[])
-      : Promise.resolve([] as DriveAsset[])
+    admin.from("content_versions").select("version_number").eq("project_id", projectId).order("version_number", { ascending: false }).limit(1).single()
   ]);
   if (latest.error) throw latest.error;
   const revised = await reviseStudioPayload({ current, changeRequest, articles, references, driveAssets, historicalInstagramGuidance: history });
   const reelPlan = revised.contentType === "reel"
-    ? reusableReelPlan(baseStructured) ?? await analyzeAndPlanReel(driveAssets, references, { musicCandidates: musicCatalog, context: `${String(project.user_context ?? "")}\nRevisão: ${changeRequest}` })
+    ? reusableReelPlan(baseStructured) ?? await analyzeAndPlanReel(driveAssets, references, { context: `${String(project.user_context ?? "")}
+Revisão: ${changeRequest}` })
     : undefined;
-  const selectedMusic = reelPlan?.musicAssetId ? musicCatalog.find((asset) => asset.id === reelPlan.musicAssetId) : undefined;
-  const effectiveDriveAssets = selectedMusic && !driveAssets.some((asset) => asset.id === selectedMusic.id) ? [...driveAssets, selectedMusic] : driveAssets;
   await cacheTemporalReference(references, reelPlan);
-  const compiled = compileStudioArtifact(revised, { driveAssets: effectiveDriveAssets, reelPlan, previousPayload: current, baseFigmaFrameIds: baseFigmaFrameIds.length === revised.frames.length ? baseFigmaFrameIds : undefined });
+  const compiled = compileStudioArtifact(revised, { driveAssets, reelPlan, previousPayload: current, baseFigmaFrameIds: baseFigmaFrameIds.length === revised.frames.length ? baseFigmaFrameIds : undefined });
   const nextVersion = Number(latest.data.version_number) + 1;
   const { data: version, error } = await admin.from("content_versions").insert({ project_id: projectId, version_number: nextVersion, parent_version_id: baseVersionId, change_request: changeRequest.trim(), payload: compiled, status: "generated", created_by: userId }).select("id,version_number").single();
   if (error) throw error;
-  await admin.from("content_projects").update({ name: compiled.title, status: "generated", drive_assets: effectiveDriveAssets, last_error: null }).eq("id", projectId);
+  await admin.from("content_projects").update({ name: compiled.title, status: "generated", drive_assets: driveAssets, last_error: null }).eq("id", projectId);
   return { versionId: version.id as string, versionNumber: nextVersion };
 }
 
@@ -322,19 +314,14 @@ export async function queueStudioVersionForFigma(projectId: string, versionId: s
   if (versionError) throw versionError;
   const parsed = studioPayloadSchema.passthrough().parse(version.payload) as StudioPayload;
   const structuredVersion = version.payload as StructuredStudioPayload;
-  let driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : [];
+  const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]).filter((asset) => !asset.mimeType.startsWith("audio/")) : [];
   let payload: StructuredStudioPayload;
   if (hasCurrentReelArtifact(structuredVersion)) {
     payload = structuredVersion;
   } else {
     const referenceIds = Array.isArray(project.instagram_reference_media_ids) ? project.instagram_reference_media_ids.map(String).slice(0, MAX_STUDIO_REFERENCES) : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
     const references = parsed.contentType === "reel" ? await getReferences(referenceIds) : [];
-    const musicCatalog = parsed.contentType === "reel"
-      ? await listDriveMedia().then((assets) => assets.filter((asset) => asset.mimeType.startsWith("audio/"))).catch(() => [] as DriveAsset[])
-      : [];
-    const reelPlan = parsed.contentType === "reel" ? await analyzeAndPlanReel(driveAssets, references, { musicCandidates: musicCatalog }) : undefined;
-    const selectedMusic = reelPlan?.musicAssetId ? musicCatalog.find((asset) => asset.id === reelPlan.musicAssetId) : undefined;
-    if (selectedMusic && !driveAssets.some((asset) => asset.id === selectedMusic.id)) driveAssets = [...driveAssets, selectedMusic];
+    const reelPlan = parsed.contentType === "reel" ? await analyzeAndPlanReel(driveAssets, references) : undefined;
     await cacheTemporalReference(references, reelPlan);
     payload = compileStudioArtifact(parsed, { driveAssets, reelPlan });
     await Promise.all([
