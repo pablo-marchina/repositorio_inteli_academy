@@ -27,14 +27,20 @@ function failureLabel(status: number) {
   return `HTTP ${status}`;
 }
 
+async function localReelFallbackOr(response: Response, init?: Parameters<typeof fetch>[1]) {
+  const localResponse = await localReelTemporalFallbackResponse(init);
+  return localResponse ?? response;
+}
+
 /**
  * Installs a narrowly-scoped fetch wrapper for Gemini generateContent calls.
  *
  * For quota exhaustion or temporary model outages, the same request is retried
- * against configured fallback models and one low-cost emergency model. If every
- * remote model is still unavailable and the request is specifically the
- * Instagram Reel temporal-analysis prompt, a deterministic FFmpeg scene
- * detector returns a Gemini-compatible response.
+ * against configured fallback models and one low-cost emergency model. Before
+ * any terminal non-2xx Gemini response is returned, the wrapper also attempts
+ * the deterministic local FFmpeg Reel analyzer. That analyzer is itself scoped
+ * to the Instagram Reel temporal-analysis prompt, so all other Gemini requests
+ * preserve their normal error semantics.
  */
 export function installGeminiModelFallback(fallbackModels: string[]) {
   if (installed || typeof globalThis.fetch !== "function") return;
@@ -50,11 +56,17 @@ export function installGeminiModelFallback(fallbackModels: string[]) {
     const [, prefix, primaryModel, suffix] = match;
     let response = await nativeFetch(input, init);
     if (response.ok) return response;
-    if (!shouldTryAnotherModel(response)) return response;
+
+    // A non-retryable remote error must not prevent a valid Reel reference from
+    // falling back to the local analyzer. For non-Reel requests this is a no-op.
+    if (!shouldTryAnotherModel(response)) return localReelFallbackOr(response, init);
 
     // The project calls Gemini with URL strings and reusable JSON bodies. Do not
-    // replay an arbitrary Request whose body may already have been consumed.
-    if (typeof input !== "string" && !(input instanceof URL)) return response;
+    // replay an arbitrary Request whose body may already have been consumed, but
+    // still give Reel temporal analysis a chance to run locally.
+    if (typeof input !== "string" && !(input instanceof URL)) {
+      return localReelFallbackOr(response, init);
+    }
 
     let lastModel = primaryModel;
     for (const fallbackModel of models) {
@@ -68,15 +80,21 @@ export function installGeminiModelFallback(fallbackModels: string[]) {
       lastModel = fallbackModel;
 
       if (response.ok) return response;
-      if (!shouldTryAnotherModel(response)) return response;
+      if (!shouldTryAnotherModel(response)) {
+        console.warn("[reel-reference] remote fallback ended with a terminal Gemini error; checking local temporal fallback", {
+          finalStatus: response.status,
+          lastModel
+        });
+        return localReelFallbackOr(response, init);
+      }
     }
 
     console.warn("[reel-reference] all remote Gemini models unavailable; attempting local FFmpeg temporal fallback", {
       finalStatus: response.status,
       lastModel
     });
-    const localResponse = await localReelTemporalFallbackResponse(init);
-    if (localResponse) return localResponse;
+    const finalResponse = await localReelFallbackOr(response, init);
+    if (finalResponse !== response) return finalResponse;
 
     console.error("[reel-reference] local FFmpeg temporal fallback could not produce an analysis", {
       finalStatus: response.status,

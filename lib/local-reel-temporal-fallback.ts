@@ -27,7 +27,7 @@ type TemporalShot = {
   focalY: number;
 };
 
-type LocalTemporalAnalysis = {
+export type LocalTemporalAnalysis = {
   durationSeconds: number;
   averageShotSeconds: number;
   rhythm: "slow" | "medium" | "fast" | "mixed";
@@ -162,6 +162,31 @@ async function detectScenes(bytes: Buffer) {
   }
 }
 
+/**
+ * Direct deterministic temporal analysis used by Studio after remote Gemini
+ * analysis returns no usable result. This path has no dependency on fetch or a
+ * specific remote HTTP status.
+ */
+export async function analyzeReelTemporalLocally(bytes: Uint8Array | Buffer) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  if (!buffer.length || buffer.length > MAX_LOCAL_REFERENCE_BYTES) return null;
+  try {
+    const analysis = await detectScenes(buffer);
+    if (!analysis) {
+      console.error("[reel-reference] direct local FFmpeg temporal analysis produced no result");
+      return null;
+    }
+    console.warn("[reel-reference] using direct deterministic FFmpeg scene analysis", {
+      durationSeconds: analysis.durationSeconds,
+      shots: analysis.shots.length
+    });
+    return analysis;
+  } catch (error) {
+    console.error("[reel-reference] direct local FFmpeg temporal analysis failed", error);
+    return null;
+  }
+}
+
 function parseReferenceRequest(init?: Parameters<typeof fetch>[1]) {
   if (typeof init?.body !== "string") return null;
   let payload: GeminiRequestPayload;
@@ -182,31 +207,21 @@ function parseReferenceRequest(init?: Parameters<typeof fetch>[1]) {
 
 /**
  * Produces a Gemini-compatible success response for Reel temporal analysis when
- * every remote model is quota-limited. This is deliberately scoped only to the
- * Instagram Reel reference prompt; all other Gemini calls keep their normal
- * failure semantics.
+ * remote models are unavailable. This remains narrowly scoped to the Instagram
+ * Reel temporal-analysis prompt; all other Gemini calls keep normal semantics.
  */
 export async function localReelTemporalFallbackResponse(init?: Parameters<typeof fetch>[1]) {
   const bytes = parseReferenceRequest(init);
   if (!bytes) return null;
-  try {
-    const analysis = await detectScenes(bytes);
-    if (!analysis) return null;
-    console.warn("[reel-reference] Gemini unavailable; using deterministic FFmpeg scene analysis", {
-      durationSeconds: analysis.durationSeconds,
-      shots: analysis.shots.length
-    });
-    return new Response(JSON.stringify({
-      candidates: [{ content: { parts: [{ text: JSON.stringify(analysis) }] } }]
-    }), {
-      status: 200,
-      headers: {
-        "content-type": "application/json",
-        "x-academy-temporal-fallback": "ffmpeg-scene-detection"
-      }
-    });
-  } catch (error) {
-    console.error("[reel-reference] local FFmpeg temporal fallback failed", error);
-    return null;
-  }
+  const analysis = await analyzeReelTemporalLocally(bytes);
+  if (!analysis) return null;
+  return new Response(JSON.stringify({
+    candidates: [{ content: { parts: [{ text: JSON.stringify(analysis) }] } }]
+  }), {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+      "x-academy-temporal-fallback": "ffmpeg-scene-detection"
+    }
+  });
 }
