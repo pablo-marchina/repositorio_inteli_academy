@@ -2,52 +2,69 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Player } from "@remotion/player";
-import { AcademyVideoComposition } from "@/remotion/AcademyVideoComposition";
 import type { DriveAsset, StudioPayload } from "@/lib/types";
 import type { StudioBrandReport, StudioVideoTimeline, StudioFigmaVideoLayout } from "@/lib/studio-artifact";
 import type { StudioRenderedReel } from "@/lib/studio-render-types";
 
-export function StudioVideoPreview({ payload, timeline, driveAssets, figmaLayout, projectId, versionId, initialRenderQa, initialRenderedReel }: {
+type TechnicalPreview = {
+  publicUrl: string;
+  storagePath: string;
+  byteSize: number;
+  durationSeconds: number;
+  cacheHit: boolean;
+  fingerprint: string;
+};
+
+export function StudioVideoPreview({ payload, timeline, driveAssets, figmaLayout, projectId, versionId, referenceMediaUrl, initialRenderQa, initialRenderedReel }: {
   payload: StudioPayload;
   timeline: StudioVideoTimeline;
   driveAssets: DriveAsset[];
   figmaLayout?: StudioFigmaVideoLayout;
   projectId?: string;
   versionId?: string;
+  referenceMediaUrl?: string | null;
   initialRenderQa?: StudioBrandReport;
   initialRenderedReel?: StudioRenderedReel;
 }) {
+  void payload;
   void driveAssets;
   const router = useRouter();
-  const usedIds = [...new Set(timeline.tracks.flatMap((track) => track.assetId ? [track.assetId] : []))];
-  const assetUrls: Record<string, string> = Object.fromEntries(
-    usedIds.map((id) => [id, `/api/drive/preview/${encodeURIComponent(id)}`])
-  );
-
-  // The editable player only needs the exact source slice used by each shot. Point each
-  // footage track at a tiny browser-safe segment instead of transcoding the full Drive file.
-  // Track IDs intentionally override asset IDs in AcademyVideoComposition, so the same source
-  // asset can be reused with different in/out points without corrupting preview timing.
-  for (const track of timeline.tracks) {
-    if (track.role !== "footage" || track.kind !== "video" || !track.assetId) continue;
-    const sourceStartSeconds = Math.max(0, (track.sourceStartFrame ?? 0) / timeline.fps);
-    const shotDurationSeconds = Math.max(0.1, track.durationInFrames / timeline.fps);
-    const query = new URLSearchParams({
-      browser: "1",
-      start: sourceStartSeconds.toFixed(3),
-      duration: shotDurationSeconds.toFixed(3)
-    });
-    assetUrls[track.id] = `/api/drive/preview/${encodeURIComponent(track.assetId)}?${query.toString()}`;
-  }
-
-  const roleUrls = (role: string) => !figmaLayout || !projectId || !versionId ? [] : (figmaLayout.roles?.[role] ?? []).map((_, index) => `/api/studio/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}/figma-layer?role=${encodeURIComponent(role)}&index=${index}`);
-  const brandLayerUrls = { background: roleUrls("background"), decoration: roleUrls("decoration"), logo: roleUrls("logo"), eyebrow: roleUrls("eyebrow"), headline: roleUrls("headline"), body: roleUrls("body") };
-  const startedRef = useRef(false);
+  const timelineKey = JSON.stringify(timeline.tracks.filter((track) => track.role === "footage").map((track) => ({
+    id: track.id,
+    assetId: track.assetId,
+    startFrame: track.startFrame,
+    durationInFrames: track.durationInFrames,
+    sourceStartFrame: track.sourceStartFrame,
+    sourceEndFrame: track.sourceEndFrame,
+    crop: track.crop
+  })));
+  const lastPreparedTimelineRef = useRef("");
+  const finalRenderTimelineRef = useRef("");
   const [renderedReel, setRenderedReel] = useState(initialRenderedReel);
   const [qa, setQa] = useState(initialRenderQa);
   const [state, setState] = useState<"idle" | "rendering" | "done" | "error">(initialRenderedReel ? "done" : "idle");
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState<TechnicalPreview | null>(null);
+  const [previewState, setPreviewState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [previewError, setPreviewError] = useState("");
+  const [matchState, setMatchState] = useState<"idle" | "matching" | "done" | "error">("idle");
+  const [matchMessage, setMatchMessage] = useState("");
+
+  const loadTechnicalPreview = useCallback(async () => {
+    if (!projectId || !versionId) return;
+    setPreviewState("loading");
+    setPreviewError("");
+    try {
+      const response = await fetch(`/api/studio/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}/technical-preview`, { method: "POST" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Falha ao gerar preview técnico.");
+      setPreview(body.preview as TechnicalPreview);
+      setPreviewState("done");
+    } catch (reason) {
+      setPreviewError(String(reason));
+      setPreviewState("error");
+    }
+  }, [projectId, versionId]);
 
   const renderFinal = useCallback(async () => {
     if (!figmaLayout || !projectId || !versionId || state === "rendering") return;
@@ -68,10 +85,43 @@ export function StudioVideoPreview({ payload, timeline, driveAssets, figmaLayout
   }, [figmaLayout, projectId, router, state, versionId]);
 
   useEffect(() => {
-    if (!figmaLayout || initialRenderedReel || startedRef.current) return;
-    startedRef.current = true;
+    if (!projectId || !versionId || lastPreparedTimelineRef.current === timelineKey) return;
+    lastPreparedTimelineRef.current = timelineKey;
+    let cancelled = false;
+    void (async () => {
+      setMatchState("matching");
+      setMatchMessage("Comparando frames reais da referência com os takes selecionados…");
+      try {
+        const response = await fetch(`/api/studio/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}/reference-rematch`, { method: "POST" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Falha ao alinhar visualmente à referência.");
+        if (cancelled) return;
+        if (body.result?.changed) {
+          const similarity = Number(body.result?.styleMatch?.averageSimilarity ?? 0);
+          setMatchMessage(`Timeline remapeada por frames (${Math.round(similarity * 100)}% de similaridade visual média). Atualizando…`);
+          lastPreparedTimelineRef.current = "";
+          window.location.reload();
+          return;
+        }
+        setMatchState("done");
+        setMatchMessage(body.result?.styleMatch?.averageSimilarity !== undefined
+          ? `Matching visual aplicado · ${Math.round(Number(body.result.styleMatch.averageSimilarity) * 100)}% de similaridade média.`
+          : "Matching visual da referência verificado.");
+      } catch (reason) {
+        if (cancelled) return;
+        setMatchState("error");
+        setMatchMessage(`Matching visual não pôde ser atualizado: ${String(reason)}`);
+      }
+      if (!cancelled) await loadTechnicalPreview();
+    })();
+    return () => { cancelled = true; };
+  }, [loadTechnicalPreview, projectId, timelineKey, versionId]);
+
+  useEffect(() => {
+    if (!figmaLayout || initialRenderedReel || matchState !== "done" || finalRenderTimelineRef.current === timelineKey) return;
+    finalRenderTimelineRef.current = timelineKey;
     void renderFinal();
-  }, [figmaLayout, initialRenderedReel, renderFinal]);
+  }, [figmaLayout, initialRenderedReel, matchState, renderFinal, timelineKey]);
 
   return <div style={{ display: "grid", gap: 18 }}>
     {renderedReel ? <div style={{ display: "grid", gap: 8 }}>
@@ -80,15 +130,28 @@ export function StudioVideoPreview({ payload, timeline, driveAssets, figmaLayout
       <span style={{ fontSize: 12, opacity: .68 }}>{(renderedReel.byteSize / 1024 / 1024).toFixed(1)} MB · {renderedReel.durationSeconds.toFixed(1)}s · SHA {renderedReel.sha256.slice(0, 12)}</span>
     </div> : null}
 
-    <div style={{ display: "grid", gap: 8 }}>
-      <strong>{renderedReel ? "Timeline editável / preview técnico" : "Preview da timeline"}</strong>
-      <div style={{ maxWidth: 360, width: "100%", overflow: "hidden", borderRadius: 18, background: "#0a0a0a" }}>
-        <Player component={AcademyVideoComposition} inputProps={{ payload, timeline, assetUrls, figmaLayout, brandLayerUrls }} durationInFrames={timeline.durationInFrames} compositionWidth={timeline.width} compositionHeight={timeline.height} fps={timeline.fps} controls style={{ width: "100%", aspectRatio: `${timeline.width}/${timeline.height}` }} />
+    <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <strong>Comparação visual · referência × montagem</strong>
+        <span style={{ fontSize: 12, opacity: .68 }}>{matchState === "matching" ? "Alinhando estrutura visual…" : matchState === "error" ? "Matching com aviso" : "Estrutura verificada"}</span>
       </div>
-      <span style={{ fontSize: 12, opacity: .62 }}>O preview usa apenas o trecho exato de cada shot em proxy H.264 leve; timing, ordem, crop e elementos da timeline continuam fiéis à edição. Render/export usam os originais do Drive.</span>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 360px))", gap: 14, alignItems: "start" }}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 700 }}>Referência selecionada</span>
+          {referenceMediaUrl ? <video src={referenceMediaUrl} controls playsInline preload="metadata" style={{ width: "100%", borderRadius: 18, background: "#0a0a0a", aspectRatio: `${timeline.width}/${timeline.height}`, objectFit: "cover" }} /> : <div style={{ minHeight: 240, borderRadius: 18, background: "#0a0a0a", display: "grid", placeItems: "center", padding: 18, textAlign: "center", fontSize: 13 }}>URL da mídia de referência indisponível nesta versão.</div>}
+        </div>
+        <div style={{ display: "grid", gap: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 700 }}>Montagem gerada · preview MP4 único</span>
+          {preview ? <video key={preview.fingerprint} src={preview.publicUrl} controls playsInline preload="metadata" style={{ width: "100%", borderRadius: 18, background: "#0a0a0a", aspectRatio: `${timeline.width}/${timeline.height}`, objectFit: "cover" }} /> : <div style={{ minHeight: 240, borderRadius: 18, background: "#0a0a0a", display: "grid", placeItems: "center", padding: 18, textAlign: "center", fontSize: 13 }}>{previewState === "loading" || matchState === "matching" ? "Preparando um único MP4 browser-safe com todos os shots…" : previewState === "error" ? previewError : "Preparando preview…"}</div>}
+          {preview ? <span style={{ fontSize: 12, opacity: .62 }}>{(preview.byteSize / 1024 / 1024).toFixed(1)} MB · {preview.durationSeconds.toFixed(1)}s · {preview.cacheHit ? "cache" : "gerado agora"}</span> : null}
+          {previewState === "error" ? <button type="button" onClick={() => void loadTechnicalPreview()}>Tentar preview novamente</button> : null}
+        </div>
+      </div>
+      <span style={{ fontSize: 12, opacity: .68 }}>{matchMessage}</span>
+      <span style={{ fontSize: 12, opacity: .62 }}>O preview técnico agora é um único MP4 H.264, em vez de vários vídeos dinâmicos dentro do Remotion Player. Ele preserva ordem, cortes, duração e crop da timeline; o render/export continua usando os originais.</span>
     </div>
 
-    {!figmaLayout ? <div style={{ fontSize: 13, padding: "10px 12px", border: "1px solid rgba(240,180,60,.35)", borderRadius: 10 }}><strong>Preview pré-Figma.</strong> Montagem, crop e timing são reais, mas a marca só é validada após sincronizar o frame no Figma.</div> : null}
+    {!figmaLayout ? <div style={{ fontSize: 13, padding: "10px 12px", border: "1px solid rgba(240,180,60,.35)", borderRadius: 10 }}><strong>Preview pré-Figma.</strong> Montagem, crop e timing são reais. Elementos gráficos finais da marca só entram após sincronizar o frame no Figma.</div> : null}
     {figmaLayout ? <div style={{ fontSize: 13, padding: "10px 12px", border: "1px solid rgba(127,127,127,.24)", borderRadius: 10 }}>
       <strong>Render final + QA:</strong> {state === "rendering" ? " codificando H.264/AAC e analisando frames do MP4…" : qa ? ` ${Math.round(qa.score)}/100 · ${qa.passed ? "aprovado" : "requer revisão"}` : state === "error" ? ` falhou: ${error}` : " pendente"}
       {qa?.issues?.length ? <div style={{ marginTop: 6 }}>{qa.issues.join(" · ")}</div> : null}

@@ -29,7 +29,7 @@ export default async function StudioProjectPage({ params }: { params: Promise<{ 
     ? project.instagram_reference_media_ids.map((id: unknown) => String(id))
     : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
   const { data: references, error: referencesError } = referenceIds.length
-    ? await supabase.from("instagram_reference_posts").select("id,permalink,caption").in("id", referenceIds)
+    ? await supabase.from("instagram_reference_posts").select("id,permalink,caption,media_url").in("id", referenceIds)
     : { data: [], error: null };
   if (referencesError) throw referencesError;
   const referenceById = new Map((references ?? []).map((reference) => [String(reference.id), reference]));
@@ -37,6 +37,7 @@ export default async function StudioProjectPage({ params }: { params: Promise<{ 
     const reference = referenceById.get(id);
     return reference ? [reference] : [];
   });
+  const referenceMediaUrl = orderedReferences[0]?.media_url ? String(orderedReferences[0].media_url) : null;
 
   const versions = (versionRows ?? []).map((row) => ({
     id: String(row.id),
@@ -63,7 +64,7 @@ export default async function StudioProjectPage({ params }: { params: Promise<{ 
   return (
     <>
       <header className="page-header"><div><span className="eyebrow">Content Studio</span><h1>{normalizedProject.name}</h1><p>Compare versões estruturadas, refine por linguagem natural, edite no Figma sem perder a identidade e publique somente depois da revisão final.</p></div></header>
-      <StructuredStudioPanel projectId={normalizedProject.id} driveAssets={normalizedProject.drive_assets} versions={versions} initialVersionId={normalizedProject.selected_version_id} />
+      <StructuredStudioPanel projectId={normalizedProject.id} driveAssets={normalizedProject.drive_assets} versions={versions} initialVersionId={normalizedProject.selected_version_id} referenceMediaUrl={referenceMediaUrl} />
       {motionVersion ? <StudioMotionControl projectId={normalizedProject.id} versionId={motionVersion.id} versionNumber={motionVersion.version_number} /> : null}
       <ContentWorkbench project={normalizedProject} versions={versions} provenance={{ articles: articles ?? [], references: orderedReferences, userContext: String(project.user_context ?? "") }} />
     </>
