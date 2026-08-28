@@ -90,6 +90,8 @@ export function createAfterEffectsScript(input: {
     const sourceStart = seconds(track.sourceStartFrame ?? 0, timeline.fps);
     const focalX = track.crop?.focalX ?? .5;
     const focalY = track.crop?.focalY ?? .5;
+    const endFocalX = track.crop?.endFocalX ?? focalX;
+    const endFocalY = track.crop?.endFocalY ?? focalY;
     const zoom = track.crop?.zoom ?? 1;
     const isVisual = track.kind === "video" || track.kind === "image";
     return [`
@@ -100,7 +102,6 @@ export function createAfterEffectsScript(input: {
     var imported = app.project.importFile(new ImportOptions(file));
     var layer = comp.layers.add(imported);
     layer.name = ${jsxString(`${track.kind.toUpperCase()} • ${track.role} • ${file.asset.name}`)};
-    // Offset the layer so the source frame at sourceStart appears exactly at the timeline start.
     layer.startTime = ${(start - sourceStart).toFixed(4)};
     layer.inPoint = ${start.toFixed(4)};
     layer.outPoint = Math.min(duration, ${Math.max(end, start + 0.1).toFixed(4)});
@@ -113,9 +114,17 @@ export function createAfterEffectsScript(input: {
       transform.property("ADBE Scale").setValue([baseScale, baseScale]);
       var scaledWidth = nativeWidth * baseScale / 100;
       var scaledHeight = nativeHeight * baseScale / 100;
-      var px = comp.width / 2 + (0.5 - ${focalX.toFixed(4)}) * scaledWidth;
-      var py = comp.height / 2 + (0.5 - ${focalY.toFixed(4)}) * scaledHeight;
-      transform.property("ADBE Position").setValue([px, py]);
+      var startPx = comp.width / 2 + (0.5 - ${focalX.toFixed(5)}) * scaledWidth;
+      var startPy = comp.height / 2 + (0.5 - ${focalY.toFixed(5)}) * scaledHeight;
+      var endPx = comp.width / 2 + (0.5 - ${endFocalX.toFixed(5)}) * scaledWidth;
+      var endPy = comp.height / 2 + (0.5 - ${endFocalY.toFixed(5)}) * scaledHeight;
+      var position = transform.property("ADBE Position");
+      if (Math.abs(endPx - startPx) > 0.1 || Math.abs(endPy - startPy) > 0.1) {
+        position.setValueAtTime(${start.toFixed(4)}, [startPx, startPy]);
+        position.setValueAtTime(${Math.max(start + .01, end).toFixed(4)}, [endPx, endPy]);
+      } else {
+        position.setValue([startPx, startPy]);
+      }
     } catch (_) {}
     ` : ""}
     ${track.kind === "audio" ? `try { layer.audio.audioLevels.setValue([${(20 * Math.log10(Math.max(.001, track.volume ?? .6))).toFixed(2)}, ${(20 * Math.log10(Math.max(.001, track.volume ?? .6))).toFixed(2)}]); } catch (_) {}` : ""}
@@ -162,7 +171,7 @@ ${textScripts.join("\n")}
     comp.openInViewer();
     var output = new File(root.fsName + ${jsxString(`/InteliAcademy-V${input.versionNumber}.aep`)});
     app.project.save(output);
-    alert("Projeto criado com cuts, trims, crop, áudio e layers separados e salvo em:\n" + output.fsName);
+    alert("Projeto criado com cuts, trims, focal tracking, áudio e layers separados e salvo em:\n" + output.fsName);
   } catch (error) {
     alert("Falha ao montar projeto Inteli Academy:\n" + error.toString());
     throw error;
@@ -223,5 +232,5 @@ export function packageAssetPath(asset: DriveAsset) {
 }
 
 export function afterEffectsReadme(versionNumber: number) {
-  return `INTELI ACADEMY — AFTER EFFECTS EDITABLE PACKAGE\n\n1. Extraia este .tar.gz preservando as pastas.\n2. No After Effects, use File > Scripts > Run Script File.\n3. Execute InteliAcademy-V${versionNumber}.jsx.\n4. O script cria e salva InteliAcademy-V${versionNumber}.aep na mesma pasta.\n\nO projeto replica a timeline v2: cada take mantém seu source in/out, posição temporal e smart crop; a trilha de áudio fica em layer independente. Textos usam caixas/tipografia lidas do Figma e a arte Figma é incluída em SVG editável, com o frame aprovado como reference layer desabilitada.\n\nMídias pequenas podem vir dentro de assets/. Mídias grandes não são duplicadas no pacote: o script pede o arquivo original e preserva a edição ao relinkar. Depois, use File > Dependencies > Collect Files se quiser consolidar o projeto.\n`;
+  return `INTELI ACADEMY — AFTER EFFECTS EDITABLE PACKAGE\n\n1. Extraia este .tar.gz preservando as pastas.\n2. No After Effects, use File > Scripts > Run Script File.\n3. Execute InteliAcademy-V${versionNumber}.jsx.\n4. O script cria e salva InteliAcademy-V${versionNumber}.aep na mesma pasta.\n\nO projeto replica a timeline v2: cada take mantém source in/out, posição temporal, zoom e focal tracking por keyframes; a trilha de áudio fica em layer independente. Textos usam caixas/tipografia lidas do Figma e a arte Figma é incluída em SVG editável, com o frame aprovado como reference layer desabilitada.\n\nMídias pequenas podem vir dentro de assets/. Mídias grandes não são duplicadas no pacote: o script pede o arquivo original e preserva a edição ao relinkar. Depois, use File > Dependencies > Collect Files se quiser consolidar o projeto.\n`;
 }
