@@ -1,4 +1,7 @@
+import { localReelTemporalFallbackResponse } from "@/lib/local-reel-temporal-fallback";
+
 const GEMINI_GENERATE_URL = /^(https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/)([^/:]+)(:generateContent(?:\?.*)?)$/;
+const EMERGENCY_FLASH_MODEL = "gemini-3.1-flash-lite";
 
 let installed = false;
 
@@ -15,21 +18,18 @@ function inputUrl(input: Parameters<typeof fetch>[0]) {
 /**
  * Installs a narrowly-scoped fetch wrapper for Gemini generateContent calls.
  *
- * Gemini free-tier quotas are enforced per project/model. When a model returns
- * HTTP 429 RESOURCE_EXHAUSTED, the exact same request is retried against the
- * configured fallback models. Non-Gemini requests and non-429 responses are
- * never modified.
- *
- * This intentionally sits below callGeminiJson so the existing structured
- * output fallback, Zod validation, repair pass, and fact/editorial reviews all
- * gain model failover without duplicating generation logic.
+ * Gemini quotas are enforced per project/model. When a model returns HTTP 429
+ * RESOURCE_EXHAUSTED, the exact same request is retried against configured
+ * fallback models and one stable low-cost emergency model. If every remote
+ * model remains quota-limited and the request is specifically the Instagram
+ * Reel temporal-analysis prompt, a deterministic FFmpeg scene detector returns
+ * a Gemini-compatible response so Reel generation can continue without lying
+ * about whether the reference was actually inspected.
  */
 export function installGeminiModelFallback(fallbackModels: string[]) {
   if (installed || typeof globalThis.fetch !== "function") return;
 
-  const models = uniqueModels(fallbackModels);
-  if (!models.length) return;
-
+  const models = uniqueModels([...fallbackModels, EMERGENCY_FLASH_MODEL]);
   const nativeFetch = globalThis.fetch.bind(globalThis);
 
   globalThis.fetch = async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -41,9 +41,8 @@ export function installGeminiModelFallback(fallbackModels: string[]) {
     let response = await nativeFetch(input, init);
     if (response.status !== 429) return response;
 
-    // callGeminiJson currently calls fetch with a URL string and a reusable JSON
-    // body. Do not attempt to replay an arbitrary Request whose body may already
-    // have been consumed.
+    // The project calls Gemini with URL strings and reusable JSON bodies. Do not
+    // replay an arbitrary Request whose body may already have been consumed.
     if (typeof input !== "string" && !(input instanceof URL)) return response;
 
     for (const fallbackModel of models) {
@@ -56,7 +55,8 @@ export function installGeminiModelFallback(fallbackModels: string[]) {
       if (response.status !== 429) return response;
     }
 
-    return response;
+    const localResponse = await localReelTemporalFallbackResponse(init);
+    return localResponse ?? response;
   };
 
   installed = true;
