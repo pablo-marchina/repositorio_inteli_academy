@@ -8,6 +8,20 @@ import type { DriveAsset } from "@/lib/types";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+function assertCurrentVisualPlan(payload: StructuredStudioPayload) {
+  const plan = payload.artifact?.reelPlan;
+  if (!plan || (plan.analysisSummary?.semanticVersion ?? 0) < 2) {
+    throw new Error("Esta versão usa uma análise de Reel legada. Reanalise ou revise a versão antes de renderizar.");
+  }
+  if (plan.reference && (plan.reference.semanticVersion ?? 0) < 2) {
+    throw new Error("A referência desta versão ainda não possui análise semântica atual.");
+  }
+  const byAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
+  if (plan.shots.some((shot) => byAsset.get(shot.assetId)?.analysisMode === "metadata-fallback")) {
+    throw new Error("A timeline usa pelo menos um shot escolhido por fallback de metadados. Reanalise a mídia antes de renderizar.");
+  }
+}
+
 export async function POST(_: Request, context: { params: Promise<{ projectId: string; versionId: string }> }) {
   if (!(await apiAdmin())) return Response.json({ error: "Não autorizado." }, { status: 401 });
   try {
@@ -20,6 +34,7 @@ export async function POST(_: Request, context: { params: Promise<{ projectId: s
     if (projectError) throw projectError;
     if (versionError) throw versionError;
     const payload = version.payload as StructuredStudioPayload;
+    assertCurrentVisualPlan(payload);
     const frameIds = Array.isArray(version.figma_frame_ids) ? version.figma_frame_ids.map(String) : [];
     if (!frameIds.length) throw new Error("A versão ainda não foi sincronizada com o Figma.");
     const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : [];

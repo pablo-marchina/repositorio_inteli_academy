@@ -15,6 +15,20 @@ async function activeInstagramAccount() {
   return asInstagramAccount(data as Record<string, unknown>);
 }
 
+function assertCurrentReelAnalysis(payload: ReturnType<typeof asRenderedStudioPayload>) {
+  const plan = payload.artifact?.reelPlan;
+  if (!plan || (plan.analysisSummary?.semanticVersion ?? 0) < 2) {
+    throw new Error("Este Reel usa uma análise visual legada. Reanalise a versão antes de publicar.");
+  }
+  if (plan.reference && (plan.reference.semanticVersion ?? 0) < 2) {
+    throw new Error("A referência deste Reel ainda não possui análise semântica atual. Reanalise a versão antes de publicar.");
+  }
+  const byAsset = new Map(plan.footage.map((analysis) => [analysis.assetId, analysis]));
+  if (plan.shots.some((shot) => byAsset.get(shot.assetId)?.analysisMode === "metadata-fallback")) {
+    throw new Error("O Reel usa pelo menos um shot escolhido por fallback de metadados. Reanalise a mídia antes de publicar.");
+  }
+}
+
 export async function approveAndPublishFinalStudioProject(projectId: string) {
   const admin = createAdminClient();
   const { data: project, error: projectError } = await admin.from("content_projects").select("*").eq("id", projectId).single();
@@ -36,7 +50,8 @@ export async function approveAndPublishFinalStudioProject(projectId: string) {
     else if (payload.contentType === "story") published = await publishStory(account, currentFigmaImages[0], false);
     else {
       const artifact = payload.artifact;
-      if (!artifact?.reelQuality?.passed) throw new Error("O Reel não passou pelos gates estruturais da timeline.");
+      assertCurrentReelAnalysis(payload);
+      if (!artifact?.reelQuality?.passed) throw new Error("O Reel não passou pelos gates estruturais, visuais e semânticos da timeline.");
       if (!artifact.renderQa?.passed) throw new Error("O MP4 final ainda não passou pelo QA visual. Renderize novamente após corrigir os pontos encontrados.");
       if (!artifact.renderedReel?.publicUrl) throw new Error("O Reel ainda não possui MP4 final renderizado.");
       const currentFigma = await getCurrentFigmaNodes([frameIds[0]]);
