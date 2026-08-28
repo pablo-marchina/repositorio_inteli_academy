@@ -86,16 +86,24 @@ export function installGeminiMediaFetchGuard() {
     try {
       response = await originalFetch(input, { ...init, signal });
     } catch (error) {
-      if (timeoutSignal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
-        console.warn("[reel-analysis] Gemini visual analysis exceeded media budget; using local fallback", {
-          timeoutMs: MEDIA_ANALYSIS_TIMEOUT_MS
-        });
-        return nonRetryableMediaFailure("visual media analysis timed out; use local fallback");
-      }
-      throw error;
+      console.warn("[reel-analysis] Gemini visual request failed; using local fallback", {
+        timeout: timeoutSignal.aborted,
+        error: String(error)
+      });
+      return nonRetryableMediaFailure(timeoutSignal.aborted
+        ? "visual media analysis timed out; use local fallback"
+        : "visual media analysis request failed; use local fallback");
     }
 
-    if (!response.ok) return response;
+    if (!response.ok) {
+      if (response.status === 429 || response.status >= 500) {
+        console.warn("[reel-analysis] Gemini visual service unavailable; using local fallback", {
+          status: response.status
+        });
+        return nonRetryableMediaFailure(`visual media service unavailable (${response.status}); use local fallback`);
+      }
+      return response;
+    }
 
     let payload: GeminiPayload;
     try {
