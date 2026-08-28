@@ -1,0 +1,54 @@
+name: Apply audiovisual v5 patch
+
+on:
+  push:
+    branches: ["fix/reel-source-audio-fetch"]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/reel-source-audio-fetch
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Apply patch
+        run: python .github/apply-source-audio-v5.py
+      - name: Install
+        run: npm install
+      - name: Generalization
+        run: npm run check:generalization
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_APP_URL: https://example.com
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
+          SUPABASE_SECRET_KEY: test-secret-key
+          APP_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          CRON_SECRET: test-cron-secret-with-at-least-24-characters
+      - name: Remove generated and temporary files
+        run: |
+          git checkout -- package-lock.json tsconfig.json next-env.d.ts 2>/dev/null || true
+          rm -f tsconfig.tsbuildinfo
+          rm -f .github/apply-source-audio-v5.py .github/workflows/apply-source-audio-v5.yml
+      - name: Commit validated patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --exit-code && exit 1 || true
+          git commit -m "Fix Reel source audio analysis and fetch failures"
+          git push origin HEAD:fix/reel-source-audio-fetch
