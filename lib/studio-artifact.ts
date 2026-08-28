@@ -119,12 +119,19 @@ export type StudioArtifact = {
 export type StructuredStudioPayload = StudioPayload & { artifact?: StudioArtifact };
 
 const TEMPLATE_HINTS: Record<StudioFrame["template"], string[]> = {
-  cover: ["capa", "novidades", "hackathon", "case", "nova diretoria"],
-  editorial: ["introdução", "analogia", "exemplo", "quando utilizar", "resumo"],
-  stat: ["resumo", "diferenças", "novidades", "acompanhamento"],
-  quote: ["analogia", "exemplo", "academy week"],
-  photo: ["case", "hackathon", "tractian", "nova diretoria", "post parceria"],
-  cta: ["fim", "academy week", "agenda"]
+  cover: ["capa", "abertura", "headline", "destaque", "titulo"],
+  editorial: ["editorial", "introducao", "contexto", "conteudo", "explicacao", "texto"],
+  stat: ["numero", "dados", "metrica", "resultado", "indicador"],
+  quote: ["quote", "frase", "citacao", "depoimento"],
+  photo: ["foto", "imagem", "midia", "evento", "pessoas", "parceria"],
+  cta: ["cta", "fim", "encerramento", "chamada", "inscricao", "contato", "obrigado"]
+};
+
+const FORMAT_HINTS: Record<StudioPayload["contentType"], string[]> = {
+  single: ["feed", "post", "4:5"],
+  carousel: ["carrossel", "carousel", "feed", "4:5"],
+  reel: ["reel", "vertical", "9:16", "video"],
+  story: ["story", "stories", "vertical", "9:16"]
 };
 
 const ALL_EDITABLE_ROLES: StudioSemanticRole[] = ["eyebrow", "headline", "body", "stat", "statLabel", "bullets", "media"];
@@ -468,7 +475,7 @@ export function compileStudioArtifact(payload: StudioPayload, options: {
       height: vertical ? 1920 : 1350,
       archetype: frame.template,
       sourcePageName: "auto-discovered",
-      preferredTemplateNames: [...new Set([postArchetype, ...(vertical ? ["instagram story"] : []), ...TEMPLATE_HINTS[frame.template]])],
+      preferredTemplateNames: [...new Set([postArchetype, ...FORMAT_HINTS[payload.contentType], ...TEMPLATE_HINTS[frame.template]])],
       sourceFigmaFrameId,
       changedRoles: changedRoles(current, frame),
       nodes: sceneNodes(frame, payload, sourceFigmaFrameId ? "figma-base-version" : "generated-content")
