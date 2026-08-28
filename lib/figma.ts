@@ -80,6 +80,13 @@ type SemanticItem = {
   style?: FigmaRestNode["style"];
 };
 
+export type FigmaDesignSystemDiscovery = {
+  fileName: string;
+  pageNames: string[];
+  candidateFrames: Array<{ id: string; name: string; pageName: string; width: number; height: number }>;
+  discoveredAt: string;
+};
+
 async function figmaRequest<T>(path: string, search?: Record<string, string>): Promise<T> {
   const config = figmaConfig();
   const url = new URL(`https://api.figma.com/v1/${path.replace(/^\//, "")}`);
@@ -93,6 +100,33 @@ export async function verifyFigmaReadAccess() {
   const config = figmaConfig();
   const payload = await figmaRequest<{ name?: string; lastModified?: string; version?: string }>(`files/${config.FIGMA_FILE_KEY}`, { depth: "1" });
   return { ok: true as const, fileName: payload.name ?? "ID Academy", lastModified: payload.lastModified ?? null, version: payload.version ?? null };
+}
+
+/**
+ * Discover the real design-system surface instead of assuming a page name.
+ * The returned candidates are intentionally generic; editorial archetype and
+ * requested output dimensions are scored by the Figma plugin at import time.
+ */
+export async function discoverFigmaDesignSystem(): Promise<FigmaDesignSystemDiscovery> {
+  const config = figmaConfig();
+  const payload = await figmaRequest<{ name?: string; document?: FigmaRestNode }>(`files/${config.FIGMA_FILE_KEY}`, { depth: "2" });
+  const pages = (payload.document?.children ?? []).filter((node) => node.type === "CANVAS" && node.visible !== false);
+  const candidateFrames = pages.flatMap((page) => (page.children ?? [])
+    .filter((node) => node.type === "FRAME" && node.visible !== false && node.id)
+    .map((node) => ({
+      id: node.id!,
+      name: node.name ?? "",
+      pageName: page.name ?? "",
+      width: node.absoluteBoundingBox?.width ?? 0,
+      height: node.absoluteBoundingBox?.height ?? 0
+    }))
+    .filter((frame) => frame.width > 0 && frame.height > 0));
+  return {
+    fileName: payload.name ?? "ID Academy",
+    pageNames: pages.map((page) => page.name ?? "").filter(Boolean),
+    candidateFrames,
+    discoveredAt: new Date().toISOString()
+  };
 }
 
 export async function getCurrentFigmaNodes(nodeIds: string[]) {
@@ -138,6 +172,15 @@ function pushRole(roles: Record<string, SemanticItem[]>, role: string, item: Sem
   if (!roles[role].some((candidate) => candidate.id === item.id)) roles[role].push(item);
 }
 
+function normalized(value: string | undefined) {
+  return String(value ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function primaryBrandCandidate(node: FigmaRestNode) {
+  const value = `${normalized(node.name)} ${normalized(node.characters)}`;
+  return /(?:^|\s)(inteli academy|academy|ia)(?:\s|$)/.test(value) && !/parceir|partner|cliente|empresa/.test(value);
+}
+
 function inferBrandRoles(root: FigmaRestNode | undefined, frameBox: FigmaRestNode["absoluteBoundingBox"], roles: Record<string, SemanticItem[]>) {
   if (!root || !frameBox?.width || !frameBox.height) return;
   const frameArea = frameBox.width * frameBox.height;
@@ -153,10 +196,20 @@ function inferBrandRoles(root: FigmaRestNode | undefined, frameBox: FigmaRestNod
     pushRole(roles, "background", background ? relativeItem(background, frameBox) : null);
   }
 
-  if (!roles.logo?.length) {
-    const logo = direct.find((node) => /(?:^|\s)(logo|academy|inteli|ia)(?:\s|$)/i.test(node.name ?? "") && !hasImageFill(node));
-    pushRole(roles, "logo", logo ? relativeItem(logo, frameBox) : null);
+  // Explicit AI::primaryLogo / AI::partnerLogo tags always win. For legacy
+  // templates, only the owned Academy mark is inferred automatically.
+  if (!roles.primaryLogo?.length) {
+    const primary = direct.find(primaryBrandCandidate);
+    pushRole(roles, "primaryLogo", primary ? relativeItem(primary, frameBox) : null);
   }
+  if (!roles.primaryLogo?.length && roles.logo?.length) {
+    pushRole(roles, "primaryLogo", roles.logo[0]);
+  }
+
+  // Keep `logo` as a backwards-compatible render alias containing both owned
+  // and partner marks. The semantic QA still sees the two roles separately.
+  for (const item of roles.primaryLogo ?? []) pushRole(roles, "logo", item);
+  for (const item of roles.partnerLogo ?? []) pushRole(roles, "logo", item);
 
   const backgroundIds = new Set((roles.background ?? []).map((item) => item.id));
   const decorationCandidates = direct
