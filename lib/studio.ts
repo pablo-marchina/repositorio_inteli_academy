@@ -28,6 +28,7 @@ import {
 } from "@/lib/studio-artifact";
 import { reviewFigmaBrandFidelity } from "@/lib/studio-brand-critic";
 import { analyzeAndPlanReel, type ReelEditingPlan } from "@/lib/studio-reel-analysis";
+import { MAX_STUDIO_ARTICLES, MAX_STUDIO_DRIVE_ASSETS, MAX_STUDIO_REFERENCES } from "@/lib/studio-limits";
 import type {
   DriveAsset,
   InstagramAccount,
@@ -38,12 +39,12 @@ import type {
 
 const createSchema = z.object({
   contentType: z.enum(["single", "carousel", "reel", "story"]),
-  articleIds: z.array(z.string().uuid()).max(12).default([]),
+  articleIds: z.array(z.string().uuid()).max(MAX_STUDIO_ARTICLES).default([]),
   userContext: z.string().max(6000).default(""),
-  instagramReferenceMediaIds: z.array(z.string().min(1)).max(8).default([]),
+  instagramReferenceMediaIds: z.array(z.string().min(1)).max(MAX_STUDIO_REFERENCES).default([]),
   instagramReferenceMediaId: z.string().min(1).nullable().optional(),
   useDrive: z.boolean().default(false),
-  driveAssetIds: z.array(z.string().min(1)).max(12).default([])
+  driveAssetIds: z.array(z.string().min(1)).max(MAX_STUDIO_DRIVE_ASSETS).default([])
 });
 
 function asInstagramAccount(row: Record<string, unknown>): InstagramAccount {
@@ -132,7 +133,7 @@ async function getReference(mediaId: string) {
 }
 
 async function getReferences(mediaIds: string[]) {
-  const unique = [...new Set(mediaIds)].slice(0, 8);
+  const unique = [...new Set(mediaIds)].slice(0, MAX_STUDIO_REFERENCES);
   if (!unique.length) return [] as InstagramReferencePost[];
   return Promise.all(unique.map((mediaId) => getReference(mediaId)));
 }
@@ -222,7 +223,7 @@ function mergeCurrentFigmaContent(payload: StudioPayload, state: Awaited<ReturnT
 
 export async function createStudioProject(rawInput: unknown, userId: string) {
   const input = createSchema.parse(rawInput);
-  const referenceIds = [...new Set([...input.instagramReferenceMediaIds, ...(input.instagramReferenceMediaId ? [input.instagramReferenceMediaId] : [])])].slice(0, 8);
+  const referenceIds = [...new Set([...input.instagramReferenceMediaIds, ...(input.instagramReferenceMediaId ? [input.instagramReferenceMediaId] : [])])].slice(0, MAX_STUDIO_REFERENCES);
   const [articles, references, driveAssets, history] = await Promise.all([loadArticles(input.articleIds), getReferences(referenceIds), loadDriveAssets(input.useDrive, input.driveAssetIds), historicalInstagramGuidance()]);
   assertFormatMedia(input.contentType, driveAssets);
   const reelPlan = input.contentType === "reel" ? await analyzeAndPlanReel(driveAssets, references) : undefined;
@@ -256,7 +257,7 @@ export async function createStudioRevision(projectId: string, baseVersionId: str
   }
   const articleIds = Array.isArray(project.article_ids) ? project.article_ids.map(String) : [];
   const driveAssets = Array.isArray(project.drive_assets) ? (project.drive_assets as DriveAsset[]) : [];
-  const referenceIds = Array.isArray(project.instagram_reference_media_ids) ? project.instagram_reference_media_ids.map(String).slice(0, 8) : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
+  const referenceIds = Array.isArray(project.instagram_reference_media_ids) ? project.instagram_reference_media_ids.map(String).slice(0, MAX_STUDIO_REFERENCES) : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
   const [articles, references, history, latest] = await Promise.all([
     loadArticles(articleIds),
     getReferences(referenceIds),
@@ -289,7 +290,7 @@ export async function queueStudioVersionForFigma(projectId: string, versionId: s
   if (getStudioArtifact(version.payload)) {
     payload = version.payload as StructuredStudioPayload;
   } else {
-    const referenceIds = Array.isArray(project.instagram_reference_media_ids) ? project.instagram_reference_media_ids.map(String).slice(0, 8) : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
+    const referenceIds = Array.isArray(project.instagram_reference_media_ids) ? project.instagram_reference_media_ids.map(String).slice(0, MAX_STUDIO_REFERENCES) : project.instagram_reference_media_id ? [String(project.instagram_reference_media_id)] : [];
     const references = parsed.contentType === "reel" ? await getReferences(referenceIds) : [];
     const reelPlan = parsed.contentType === "reel" ? await analyzeAndPlanReel(driveAssets, references) : undefined;
     payload = compileStudioArtifact(parsed, { driveAssets, reelPlan });
