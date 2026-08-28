@@ -4,6 +4,19 @@ import { env } from "@/lib/env";
 import { FIGMA_AUDITED_PAGE_NAMES } from "@/lib/figma-audit";
 import type { DriveAsset, InstagramReferencePost, StudioContentType, StudioPayload } from "@/lib/types";
 
+const postArchetypeSchema = z.enum([
+  "partnership",
+  "event-recap",
+  "case",
+  "announcement",
+  "educational",
+  "results",
+  "people",
+  "quote",
+  "cta",
+  "general"
+]);
+
 const frameSchema = z.object({
   position: z.number().int().min(1).max(10),
   template: z.enum(["cover", "editorial", "stat", "quote", "photo", "cta"]),
@@ -17,6 +30,14 @@ const frameSchema = z.object({
   mediaFit: z.enum(["cover", "contain"]).optional()
 });
 
+const brandContextSchema = z.object({
+  primaryBrandName: z.literal("Inteli Academy").default("Inteli Academy"),
+  partnerName: z.string().min(1).max(100).optional(),
+  partnerLogoAssetId: z.string().min(1).optional(),
+  partnerLogoSource: z.enum(["drive-user-authorized", "figma-verified"]).optional(),
+  partnerLogoStatus: z.enum(["not-required", "ready", "missing"]).default("not-required")
+});
+
 export const studioPayloadSchema = z.object({
   contentType: z.enum(["single", "carousel", "reel", "story"]),
   title: z.string().min(1).max(120),
@@ -24,7 +45,9 @@ export const studioPayloadSchema = z.object({
   frames: z.array(frameSchema).min(1).max(10),
   factualClaims: z.array(z.object({ claim: z.string().min(1), sourceUrl: z.string().url() })).max(24),
   primaryDriveAssetId: z.string().optional(),
-  styleSummary: z.string().min(10).max(900)
+  styleSummary: z.string().min(10).max(900),
+  postArchetype: postArchetypeSchema.default("general"),
+  brandContext: brandContextSchema.default({ primaryBrandName: "Inteli Academy", partnerLogoStatus: "not-required" })
 });
 
 const visualAnalysisSchema = z.object({
@@ -83,7 +106,7 @@ function assetsText(assets: DriveAsset[]) {
 
 function referencesText(references: InstagramReferencePost[]) {
   if (!references.length) {
-    return "Nenhum post específico foi escolhido. Use o histórico real completo do perfil como principal referência editorial e Social Media como principal fonte visual do Figma.";
+    return "Nenhum post específico foi escolhido. Use o histórico real completo do perfil como referência editorial. O Figma deve ser descoberto pela estrutura real do arquivo, sem assumir um nome fixo de página.";
   }
   const rendered = references.map((reference, index) => [
     `REFERÊNCIA REAL ${index + 1}`,
@@ -94,12 +117,14 @@ function referencesText(references: InstagramReferencePost[]) {
     `Permalink: ${reference.permalink}`,
     `Análise visual: ${reference.visualAnalysis ? JSON.stringify(reference.visualAnalysis) : "imagem indisponível para análise; use tipo, legenda e padrões gerais"}`
   ].join("\n")).join("\n\n");
-  return `${rendered}\n\nOs posts acima formam JUNTOS o nível de referência mais forte desta geração. Extraia padrões comuns de composição, ritmo, densidade, mídia e tom. Quando divergirem, combine apenas elementos compatíveis com a identidade da Academy. Nenhum post deve ser tratado automaticamente como principal. Não copie literalmente texto ou conteúdo factual deles.`;
+  return `${rendered}\n\nOs posts acima formam JUNTOS o nível de referência mais forte desta geração. Separe estrutura de identidade: extraia ritmo, composição, função dos shots/frames, densidade, overlays e progressão narrativa, mas aplique a identidade real da Academy e do parceiro através do Figma/assets autorizados. Não copie literalmente texto, logos ou conteúdo factual da referência.`;
 }
 
 function validateStudioPayload(payload: StudioPayload, allowedAssets: DriveAsset[], articles: StudioArticleEvidence[]) {
   const normalized: StudioPayload = {
     ...payload,
+    postArchetype: payload.postArchetype ?? "general",
+    brandContext: payload.brandContext ?? { primaryBrandName: "Inteli Academy", partnerLogoStatus: "not-required" },
     frames: [...payload.frames]
       .sort((a, b) => a.position - b.position)
       .map((frame, index) => ({ ...frame, position: index + 1 }))
@@ -128,6 +153,39 @@ function validateStudioPayload(payload: StudioPayload, allowedAssets: DriveAsset
     if (!primary?.mimeType.startsWith("video/")) {
       throw new Error("Reel requer um vídeo do Drive selecionado como mídia principal.");
     }
+  }
+
+  const brand = normalized.brandContext!;
+  const partnerLogo = brand.partnerLogoAssetId
+    ? allowedAssets.find((asset) => asset.id === brand.partnerLogoAssetId)
+    : undefined;
+  if (brand.partnerLogoAssetId && !partnerLogo) {
+    throw new Error("A geração tentou usar uma logo de parceiro que não foi autorizada pelo usuário.");
+  }
+  if (partnerLogo && !partnerLogo.mimeType.startsWith("image/")) {
+    throw new Error("A logo de parceiro precisa ser um asset de imagem autorizado, nunca um recorte de vídeo.");
+  }
+  if (partnerLogo) {
+    normalized.brandContext = {
+      ...brand,
+      partnerLogoAssetId: partnerLogo.id,
+      partnerLogoSource: "drive-user-authorized",
+      partnerLogoStatus: "ready"
+    };
+  } else if (normalized.postArchetype === "partnership" || brand.partnerName) {
+    normalized.brandContext = {
+      ...brand,
+      partnerLogoAssetId: undefined,
+      partnerLogoSource: undefined,
+      partnerLogoStatus: "missing"
+    };
+  } else {
+    normalized.brandContext = {
+      ...brand,
+      partnerLogoAssetId: undefined,
+      partnerLogoSource: undefined,
+      partnerLogoStatus: "not-required"
+    };
   }
 
   const allowedArticleUrls = new Set(articles.map((article) => article.url));
@@ -164,7 +222,7 @@ export async function analyzeInstagramReferenceVisual(reference: InstagramRefere
         contents: [{
           role: "user",
           parts: [
-            { text: "Analise este post REAL já publicado pelo Instagram da Inteli Academy como referência de direção de arte. Descreva composição, hierarquia, paleta percebida, tipografia percebida, uso de mídia, densidade, motivos gráficos, tom e padrões reutilizáveis. Não tente identificar pessoas. Retorne apenas JSON." },
+            { text: "Analise este post REAL já publicado pelo Instagram da Inteli Academy como referência de direção de arte. Descreva composição, hierarquia, paleta percebida, tipografia percebida, uso de mídia, densidade, motivos gráficos, tom e padrões reutilizáveis. Separe estrutura reutilizável de logos/identidade específicos do post. Não tente identificar pessoas. Retorne apenas JSON." },
             { inlineData: { mimeType: contentType, data: bytes.toString("base64") } }
           ]
         }],
@@ -196,7 +254,7 @@ export async function generateStudioPayload(input: {
   const evidenceRules = input.articles.length
     ? "Artigos selecionados são as únicas fontes permitidas para factualClaims. Toda factualClaim deve apontar exatamente para uma URL desses artigos."
     : "Nenhum artigo foi selecionado. factualClaims DEVE ser []. Não invente fatos externos, números, datas, estudos, citações ou URLs. Trabalhe com o contexto do usuário, mensagens institucionais genéricas e direção editorial/visual.";
-  const system = `Você é o diretor editorial e de arte da Inteli Academy. Gere conteúdo para o Instagram oficial da liga usando a identidade existente e somente as evidências explicitamente fornecidas quando houver.\n\nHIERARQUIA DE REFERÊNCIAS\n1. Todos os posts reais do @inteli.academy escolhidos pelo usuário formam JUNTOS o nível visual/editorial mais forte desta geração. Nenhum deles é automaticamente principal.\n2. O histórico real sincronizado do @inteli.academy define tom, densidade, formatos e padrões editoriais gerais.\n3. O Figma ID Academy define a identidade visual e a biblioteca de linguagem gráfica. Todas as páginas auditadas em 12/08/2026 devem ser consideradas: ${FIGMA_AUDITED_PAGE_NAMES.join(", ")}. A página Social Media é a PRINCIPAL fonte visual do Figma para formatos sociais, sem excluir as demais páginas.\n4. Artigos selecionados, quando existirem, fornecem evidência factual; o contexto do usuário define a mensagem e as restrições específicas.\n\nREGRAS\n- ${evidenceRules}\n- Não trate posts de referência do Instagram como fontes factuais; eles servem para estilo/editorial.\n- Use português brasileiro natural, direto e sem linguagem corporativa vazia.\n- Não copie literalmente os posts de referência; reutilize princípios, não conteúdo.\n- O renderer e o plugin Figma controlam a gramática visual final. Escolha template e conteúdo, não invente estilos fora da Academy.\n- mediaAssetId e primaryDriveAssetId só podem usar IDs da lista de assets autorizados. Se a lista estiver vazia, omita esses campos.\n- Para Reel, primaryDriveAssetId deve ser um vídeo autorizado.\n- Para carrossel, varie cover/editorial/stat/quote/photo/cta conforme o conteúdo; não repita layouts sem motivo.\n- Garanta leitura confortável em mobile e pouca densidade por frame.\n\nFORMATO: ${input.contentType}\n${frameRules(input.contentType)}`;
+  const system = `Você é o diretor editorial e de arte da Inteli Academy. Gere conteúdo para o Instagram oficial da liga usando a identidade existente e somente as evidências explicitamente fornecidas quando houver.\n\nHIERARQUIA DE REFERÊNCIAS\n1. Todos os posts reais do @inteli.academy escolhidos pelo usuário formam JUNTOS o nível estrutural/editorial mais forte desta geração. Nenhum deles é automaticamente principal.\n2. O histórico real sincronizado do @inteli.academy define tom, densidade, formatos e padrões editoriais gerais.\n3. O Figma ID Academy define a identidade visual. As páginas conhecidas (${FIGMA_AUDITED_PAGE_NAMES.join(", ")}) são apenas pistas históricas: o plugin deve descobrir os templates pela estrutura REAL do arquivo e nunca depender de uma página chamada Social Media.\n4. Artigos selecionados, quando existirem, fornecem evidência factual; o contexto do usuário define a mensagem e as restrições específicas.\n\nARQUÉTIPO DO POST\nClassifique postArchetype pelo propósito editorial, independentemente do layout: partnership, event-recap, case, announcement, educational, results, people, quote, cta ou general. O arquétipo será usado pelo resolver de Figma para escolher componentes reais.\n\nMARCAS E LOGOS\n- primaryBrandName é sempre Inteli Academy.\n- Se houver parceiro/empresa, registre partnerName.\n- partnerLogoAssetId só pode apontar para uma IMAGEM do Drive explicitamente autorizada que seja a logo fornecida pelo usuário. Nunca use frame de vídeo, screenshot incidental, texto aproximado ou logo inventada.\n- Se não houver logo autorizada, omita partnerLogoAssetId e use partnerLogoStatus=missing. O sistema bloqueará aprovação até a marca ser resolvida.\n- Não redesenhe, gere ou improvise logos.\n\nREGRAS\n- ${evidenceRules}\n- Não trate posts de referência do Instagram como fontes factuais; eles servem para estrutura/estilo/editorial.\n- Use português brasileiro natural, direto e sem linguagem corporativa vazia.\n- Não copie literalmente os posts de referência; reutilize princípios, não conteúdo ou marcas.\n- Separe timing/composição/função narrativa da identidade visual. A referência diz COMO a peça se organiza; o Figma e os assets autorizados dizem COMO a Academy e o parceiro aparecem.\n- O renderer e o plugin Figma controlam a gramática visual final. Escolha template e conteúdo, não invente estilos fora da Academy.\n- mediaAssetId e primaryDriveAssetId só podem usar IDs da lista de assets autorizados. Se a lista estiver vazia, omita esses campos.\n- Para Reel, primaryDriveAssetId deve ser um vídeo autorizado.\n- Para carrossel, varie cover/editorial/stat/quote/photo/cta conforme o conteúdo; não repita layouts sem motivo.\n- Garanta leitura confortável em mobile e pouca densidade por frame.\n\nFORMATO: ${input.contentType}\n${frameRules(input.contentType)}`;
 
   const user = `ARTIGOS SELECIONADOS (OPCIONAIS)\n${evidenceText(input.articles)}\n\n` +
     `CONTEXTO ESPECÍFICO DO USUÁRIO\n${input.userContext.trim() || "Nenhum contexto adicional."}\n\n` +
@@ -225,7 +283,7 @@ export async function reviseStudioPayload(input: {
   const evidenceRules = input.articles.length
     ? "Não altere fatos sem suporte nos artigos selecionados e mantenha factualClaims restritas às URLs desses artigos."
     : "Não há artigos selecionados: factualClaims deve permanecer vazia e a revisão não pode introduzir fatos externos, números, datas, estudos, citações ou URLs.";
-  const system = `Você está revisando uma versão visual/editorial já gerada para o Instagram da Inteli Academy. A alteração pedida pelo usuário tem prioridade, mas deve preservar precisão, formato, identidade da Academy e os assets autorizados. Retorne a versão COMPLETA, não apenas um diff. ${evidenceRules} Todos os posts reais escolhidos continuam formando juntos o nível visual/editorial prioritário; nenhum é automaticamente principal. A página Social Media continua sendo a principal fonte visual do Figma para conteúdo social, e todas as páginas auditadas (${FIGMA_AUDITED_PAGE_NAMES.join(", ")}) permanecem válidas como identidade.`;
+  const system = `Você está revisando uma versão visual/editorial já gerada para o Instagram da Inteli Academy. A alteração pedida pelo usuário tem prioridade, mas deve preservar precisão, formato, identidade da Academy, arquétipo editorial e os assets autorizados. Retorne a versão COMPLETA, não apenas um diff. ${evidenceRules} Todos os posts reais escolhidos continuam formando juntos o nível estrutural/editorial prioritário; nenhum é automaticamente principal. O Figma deve ser descoberto pela estrutura real do arquivo, sem assumir nomes fixos de página. Preserve a separação entre primaryBrandName e partnerName/partnerLogoAssetId. Nunca invente ou redesenhe a logo de um parceiro.`;
   const user = `VERSÃO ATUAL\n${JSON.stringify(input.current)}\n\nALTERAÇÃO PEDIDA\n${input.changeRequest}\n\nARTIGOS OPCIONAIS\n${evidenceText(input.articles)}\n\nREFERÊNCIAS REAIS\n${referencesText(input.references)}\n\nHISTÓRICO\n${input.historicalInstagramGuidance}\n\nASSETS AUTORIZADOS\n${assetsText(input.driveAssets)}`;
   const revised = await callGeminiJson(
     [{ role: "system", content: system }, { role: "user", content: user }],
