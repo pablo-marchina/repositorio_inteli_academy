@@ -144,11 +144,9 @@ export async function GET(request: Request, context: { params: Promise<{ project
       if (target === "final-cut") targetFiles.push({ path: "content.otio", data: JSON.stringify(otio, null, 2) });
     }
     if (target === "avid" || target === "universal") {
-      targetFiles.push(
-        { path: "avid.ale", data: serializeAvidAle({ payload, media }) },
-        ...(target === "universal" || !targetFiles.some((file) => file.path === "project.edl") ? [{ path: "project.edl", data: edl }] : []),
-        ...(target === "avid" ? [{ path: "content.otio", data: JSON.stringify(otio, null, 2) }] : [])
-      );
+      targetFiles.push({ path: "avid.ale", data: serializeAvidAle({ payload, media }) });
+      if (!targetFiles.some((file) => file.path === "project.edl")) targetFiles.push({ path: "project.edl", data: edl });
+      if (target === "avid") targetFiles.push({ path: "content.otio", data: JSON.stringify(otio, null, 2) });
     }
     if (target === "universal" && !targetFiles.some((file) => file.path === "content.otio")) targetFiles.unshift({ path: "content.otio", data: JSON.stringify(otio, null, 2) });
 
