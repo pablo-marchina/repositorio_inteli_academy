@@ -31,7 +31,7 @@ jobs:
           cp w5_overrides/alerts_page.tsx w4-gate/apps/web/app/alerts/page.tsx
       - name: Start factual W2 snapshot API
         run: |
-          python gate/real_api.py > /tmp/w5-api.log 2>&1 &
+          python w5_overrides/w5_web_api.py > /tmp/w5-api.log 2>&1 &
           for i in {1..30}; do curl -fsS 'http://127.0.0.1:8787/v1/hackathons?limit=1' >/dev/null && exit 0; sleep 1; done
           cat /tmp/w5-api.log; exit 1
       - name: Typecheck and build W5 web
