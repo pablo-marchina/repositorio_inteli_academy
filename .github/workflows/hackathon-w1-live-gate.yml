@@ -1,0 +1,41 @@
+name: Hackathon W1 Live Gate
+
+on:
+  push:
+    branches:
+      - tmp/hackathon-w1-4of4-gate
+    paths:
+      - scripts/run_live_sources.py
+      - .github/workflows/hackathon-w1-live-gate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  w1-live-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GATE_WRITE_URL: https://oajhxypmffevxhswvhwh.supabase.co/functions/v1/w1-live-gate-sink
+      GATE_TOKEN: temporary-w1-live-gate-20260923
+    steps:
+      - name: Checkout gate branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install runtime dependency
+        run: python -m pip install --disable-pip-version-check httpx
+
+      - name: Run four authorized live sources
+        run: |
+          python scripts/run_live_sources.py \
+            --source hackclub_hackathons \
+            --source hackclub_programs \
+            --source hackclub_community_events \
+            --source agenda_tech_brasil \
+            --max-pages 5
