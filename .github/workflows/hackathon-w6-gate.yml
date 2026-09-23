@@ -1,0 +1,169 @@
+name: Hackathon W6 Release Gate
+on:
+  push:
+    branches: ['tmp/hackathon-w6-gate']
+permissions:
+  contents: read
+jobs:
+  schema-performance:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon
+          POSTGRES_DB: hackathon
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hackathon -d hackathon"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://hackathon:hackathon@127.0.0.1:5432/hackathon
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract validated W6 gate payload
+        run: |
+          base64 -d w6_gate_payload.tar.xz.b64 >/tmp/w6_gate_payload.tar.xz
+          tar -xJf /tmp/w6_gate_payload.tar.xz
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install 'psycopg[binary]>=3.2,<4' httpx
+      - name: Exact W6 migration gate
+        run: python w6_gate/w6_gate.py migration --sql w6_gate/0006.sql
+      - name: 50k-row load and EXPLAIN ANALYZE gate
+        run: python w6_gate/w6_gate.py performance
+
+  disaster-recovery:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon
+          POSTGRES_DB: hackathon
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hackathon -d hackathon"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://hackathon:hackathon@127.0.0.1:5432/hackathon
+      S3_ENDPOINT_URL: http://127.0.0.1:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: raw-documents
+      S3_REGION: us-east-1
+      BACKUP_DIR: /tmp/w6-backups
+      OBJECT_BACKUP_FILE: /tmp/w6-backups/raw-objects.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract validated W6 gate payload
+        run: |
+          base64 -d w6_gate_payload.tar.xz.b64 >/tmp/w6_gate_payload.tar.xz
+          tar -xJf /tmp/w6_gate_payload.tar.xz
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install boto3 'psycopg[binary]>=3.2,<4'
+      - name: Start MinIO
+        run: |
+          docker run -d --name w6-minio -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data --console-address ':9001'
+          for i in {1..45}; do curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null && exit 0; sleep 1; done
+          docker logs w6-minio; exit 1
+      - name: Seed canonical DB and raw object store
+        run: python w6_gate/dr_gate.py seed
+      - name: Backup database and object storage
+        run: |
+          mkdir -p "$BACKUP_DIR"
+          bash w6_gate/backup_postgres.sh | tee /tmp/db-backup-path
+          python w6_gate/backup_object_storage.py
+      - name: Destroy source data
+        run: python w6_gate/dr_gate.py destroy
+      - name: Restore and verify checksums/references
+        run: |
+          START=$(date +%s)
+          DUMP=$(tail -n1 /tmp/db-backup-path)
+          bash w6_gate/restore_postgres.sh "$DUMP"
+          python w6_gate/restore_object_storage.py
+          python w6_gate/dr_gate.py verify --started "$START"
+
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract validated W6 gate payload
+        run: |
+          base64 -d w6_gate_payload.tar.xz.b64 >/tmp/w6_gate_payload.tar.xz
+          tar -xJf /tmp/w6_gate_payload.tar.xz
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - uses: actions/setup-node@v5
+        with: {node-version: '22'}
+      - name: Dependency audit - Python
+        run: |
+          pip install pip-audit
+          pip-audit -r w6_gate/requirements-security.txt --strict
+      - name: Dependency audit - web
+        working-directory: w6_gate
+        run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm audit --audit-level=high
+      - name: SSRF/private-IP and secret-redaction gate
+        run: python w6_gate/security_gate.py
+
+  failure-e2e:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon
+          POSTGRES_DB: hackathon
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hackathon -d hackathon"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://hackathon:hackathon@127.0.0.1:5432/hackathon
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract validated W6 gate payload
+        run: |
+          base64 -d w6_gate_payload.tar.xz.b64 >/tmp/w6_gate_payload.tar.xz
+          tar -xJf /tmp/w6_gate_payload.tar.xz
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - uses: actions/setup-node@v5
+        with: {node-version: '22'}
+      - run: pip install httpx 'psycopg[binary]>=3.2,<4'
+      - name: Major-source failure drill + live unknown-event E2E
+        run: python w6_gate/w6_gate.py live --output /tmp/e2e_event.json
+      - name: Start E2E API backed by live candidate
+        run: |
+          E2E_EVENT_JSON=/tmp/e2e_event.json python w6_gate/e2e_api.py >/tmp/e2e-api.log 2>&1 &
+          for i in {1..30}; do curl -fsS 'http://127.0.0.1:8787/v1/hackathons?limit=1' >/dev/null && exit 0; sleep 1; done
+          cat /tmp/e2e-api.log; exit 1
+      - name: Build real Next UI and overlay W6 admin
+        run: |
+          curl -fsSL 'https://raw.githubusercontent.com/pablo-marchina/repositorio_inteli_academy/358a853e96d85f2bfaea49dfe2e44ecba1028e5b/w4-web-gate.tar.xz.b64' | base64 -d >/tmp/w4-web.tar.xz
+          mkdir -p /tmp/w4 && tar -xJf /tmp/w4-web.tar.xz -C /tmp/w4
+          mkdir -p /tmp/w4/apps/web/app/admin
+          cp w6_gate/admin_page.tsx /tmp/w4/apps/web/app/admin/page.tsx
+          cd /tmp/w4/apps/web
+          npm install --no-audit --no-fund
+          npm run typecheck
+          API_URL=http://127.0.0.1:8787 NEXT_PUBLIC_API_URL=http://127.0.0.1:8787 ADMIN_API_KEY=w6-gate npm run build
+      - name: Smoke search, detail and admin UI with live event
+        run: |
+          cd /tmp/w4/apps/web
+          API_URL=http://127.0.0.1:8787 NEXT_PUBLIC_API_URL=http://127.0.0.1:8787 ADMIN_API_KEY=w6-gate npm run start -- -H 127.0.0.1 -p 3000 >/tmp/w6-web.log 2>&1 &
+          for i in {1..30}; do curl -fsS http://127.0.0.1:3000/ >/dev/null && break; sleep 1; done
+          NAME=$(python -c "import json;print(json.load(open('/tmp/e2e_event.json'))['candidate']['name'])")
+          SLUG=$(python -c "import json;print(json.load(open('/tmp/e2e_event.json'))['candidate']['slug'])")
+          curl -fsS "http://127.0.0.1:3000/search?q=$(python -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "$NAME")" | grep -F "$NAME"
+          curl -fsS "http://127.0.0.1:3000/hackathons/$SLUG" | grep -F "$NAME"
+          curl -fsS http://127.0.0.1:3000/admin | grep -F 'LOW_CONFIDENCE'
+          cat /tmp/e2e_event.json
