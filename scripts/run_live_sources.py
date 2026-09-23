@@ -70,10 +70,8 @@ def parse_hackclub_hackathons(payload, source_url):
             "country_code": location.get("country_code"),
             "metadata": {"logo_url": row.get("logo_url"), "banner_url": row.get("banner_url"), "apac": row.get("apac")},
         })
-    next_url = None
     links = payload.get("links") if isinstance(payload, dict) else None
-    if isinstance(links, dict):
-        next_url = valid_url(links.get("next"))
+    next_url = valid_url(links.get("next")) if isinstance(links, dict) else None
     return out, [next_url] if next_url else []
 
 
@@ -178,42 +176,38 @@ PARSERS = {
 }
 
 
-class SupabaseSink:
-    def __init__(self, url: str, key: str):
-        self.base = url.rstrip("/") + "/rest/v1"
-        self.client = httpx.AsyncClient(timeout=30.0, headers={
-            "apikey": key,
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation",
-        })
+class GateSink:
+    def __init__(self, url: str, token: str):
+        self.url = url
+        self.client = httpx.AsyncClient(timeout=30.0, headers={"x-gate-token": token, "content-type": "application/json"})
 
     async def close(self):
         await self.client.aclose()
 
+    async def _write(self, payload: dict):
+        response = await self.client.post(self.url, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"gate sink rejected write: {data}")
+        return data.get("data")
+
     async def insert(self, table: str, row: dict):
-        r = await self.client.post(f"{self.base}/{table}", json=row)
-        r.raise_for_status()
-        return r.json()
+        return await self._write({"op": "insert", "table": table, "row": row})
 
     async def patch(self, table: str, row_id: str, row: dict):
-        r = await self.client.patch(f"{self.base}/{table}", params={"id": f"eq.{row_id}"}, json=row)
-        r.raise_for_status()
+        return await self._write({"op": "patch", "table": table, "id": row_id, "row": row})
 
 
-async def run_source(source_key: str, max_pages: int, sink: SupabaseSink):
+async def run_source(source_key: str, max_pages: int, sink: GateSink):
     spec = SOURCES[source_key]
     parser = PARSERS[source_key]
     run_id = str(uuid4())
-    started = now_iso()
-    await sink.insert("crawl_runs", {"id": run_id, "source_key": source_key, "status": "RUNNING", "started_at": started, "stats": {}})
+    await sink.insert("crawl_runs", {"id": run_id, "source_key": source_key, "status": "RUNNING", "started_at": now_iso(), "stats": {}})
     queue = [spec["url"]]
     seen = set()
     errors = []
-    fetched_pages = 0
-    persisted_documents = 0
-    persisted_refs = 0
-    parsed_records = 0
+    fetched_pages = persisted_documents = persisted_refs = parsed_records = 0
 
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers={"User-Agent": "HackathonIntelligenceBot/0.1 (+data-quality-gate)"}) as client:
         while queue and fetched_pages < max_pages:
@@ -289,7 +283,7 @@ async def run_source(source_key: str, max_pages: int, sink: SupabaseSink):
         "fetched_count": fetched_pages, "parsed_count": parsed_records, "failed_count": len(errors),
         "persisted_documents": persisted_documents, "persisted_event_refs": persisted_refs,
     }
-    await sink.patch("crawl_runs", run_id, {"status": status, "finished_at": now_iso(), "stats": stats})
+    await sink.patch("crawl_runs", run_id, {"source_key": source_key, "status": status, "finished_at": now_iso(), "stats": stats})
     result = {"source": source_key, "crawl_run_id": run_id, "status": status, **stats, "errors": errors}
     print(json.dumps(result, ensure_ascii=False))
     return result
@@ -304,9 +298,7 @@ async def main() -> int:
     unknown = set(selected) - set(SOURCES)
     if unknown:
         raise SystemExit(f"unknown source(s): {sorted(unknown)}")
-    url = os.environ["SUPABASE_URL"]
-    key = os.environ["SUPABASE_ANON_KEY"]
-    sink = SupabaseSink(url, key)
+    sink = GateSink(os.environ["GATE_WRITE_URL"], os.environ["GATE_TOKEN"])
     try:
         results = []
         for source in selected:
