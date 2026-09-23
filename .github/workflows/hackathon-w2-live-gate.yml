@@ -1,0 +1,28 @@
+name: Hackathon W2 Live Canonical Gate
+
+on:
+  push:
+    branches:
+      - tmp/hackathon-w2-live-canonical-gate
+
+permissions:
+  contents: read
+
+jobs:
+  w2-live-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      W2_GATE_URL: https://oajhxypmffevxhswvhwh.supabase.co/functions/v1/w2-live-gate-api
+      W2_GATE_TOKEN: temporary-w2-live-gate-20260923
+    steps:
+      - name: Checkout gate branch
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime dependency
+        run: python -m pip install --disable-pip-version-check httpx
+      - name: Run W2 over live W1 corpus
+        run: python scripts/run_w2_live.py
