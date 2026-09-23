@@ -1,0 +1,51 @@
+name: Hackathon W4 Web Gate
+on:
+  push:
+    branches: [tmp/hackathon-w4-web-gate]
+permissions:
+  contents: read
+jobs:
+  web-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Extract exact W4 web baseline
+        run: tar -xzf w4-web-gate.tar.gz
+      - name: Start real W2 snapshot API
+        run: |
+          python3 gate/real_api.py > /tmp/w4-real-api.log 2>&1 &
+          echo $! > /tmp/w4-real-api.pid
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8787/v1/hackathons >/dev/null && break; sleep 0.25; done
+      - name: Install and typecheck
+        working-directory: apps/web
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+      - name: Build Next.js against real W2 snapshot
+        working-directory: apps/web
+        env:
+          API_URL: http://127.0.0.1:8787
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+        run: npm run build
+      - name: Smoke-test rendered product
+        working-directory: apps/web
+        env:
+          API_URL: http://127.0.0.1:8787
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+        run: |
+          npm start -- -p 3005 > /tmp/w4-next.log 2>&1 &
+          echo $! > /tmp/w4-next.pid
+          for i in $(seq 1 40); do curl -fsS http://127.0.0.1:3005/ >/tmp/home.html && break; sleep 0.5; done
+          curl -fsS 'http://127.0.0.1:3005/search?q=MoonStone' > /tmp/search.html
+          curl -fsS 'http://127.0.0.1:3005/hackathons/moonstone-4b6701b9' > /tmp/detail.html
+          grep -q 'MoonStone' /tmp/home.html
+          grep -q 'MoonStone' /tmp/search.html
+          grep -q 'MoonStone' /tmp/detail.html
+          grep -q 'application/ld+json' /tmp/detail.html
+          grep -q 'moonstone.org.cn' /tmp/detail.html
+          ! grep -q 'Data service unavailable' /tmp/home.html
+          echo 'W4 web gate passed with real W2 canonical snapshot'
