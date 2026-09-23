@@ -25,6 +25,7 @@ jobs:
           mkdir -p w4-gate
           base64 -d w4-web-gate.tar.xz.b64 > /tmp/w4-web-gate.tar.xz
           tar -xJf /tmp/w4-web-gate.tar.xz -C w4-gate
+          cp w4_overrides/detail_page.tsx 'w4-gate/apps/web/app/hackathons/[slug]/page.tsx'
       - name: Start factual W2 snapshot API
         working-directory: w4-gate
         run: |
@@ -70,6 +71,8 @@ jobs:
           curl -fsS http://127.0.0.1:3000/ | tee /tmp/home.html | grep -q 'MoonStone'
           curl -fsS 'http://127.0.0.1:3000/search?status=UPCOMING' | tee /tmp/search.html | grep -q 'Bay-Valley Hacks'
           curl -fsS http://127.0.0.1:3000/hackathons/moonstone-4b6701b9 | tee /tmp/detail.html | grep -q 'MoonStone'
+          grep -q 'Eligibility & teams' /tmp/detail.html
+          grep -q 'Canonical official event page' /tmp/detail.html
           curl -fsS http://127.0.0.1:3000/library | tee /tmp/library.html | grep -Eq 'Sign in|Library|saved'
       - name: Evidence
         if: always()
