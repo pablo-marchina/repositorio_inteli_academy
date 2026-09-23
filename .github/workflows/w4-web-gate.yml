@@ -1,0 +1,79 @@
+name: W4 web gate
+
+on:
+  push:
+    branches:
+      - tmp/hackathon-w4-web-gate
+
+permissions:
+  contents: read
+
+jobs:
+  w4-web-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Extract validated W4 bundle
+        run: |
+          mkdir -p w4-gate
+          tar -xzf w4-web-gate.tar.gz -C w4-gate
+      - name: Start factual W2 snapshot API
+        working-directory: w4-gate
+        run: |
+          python gate/real_api.py > /tmp/w4-api.log 2>&1 &
+          echo $! > /tmp/w4-api.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8787/v1/hackathons?limit=1 >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/w4-api.log
+          exit 1
+      - name: Install frontend dependencies
+        working-directory: w4-gate/apps/web
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        working-directory: w4-gate/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+        run: npm run typecheck
+      - name: Build Next.js
+        working-directory: w4-gate/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+        run: npm run build
+      - name: Start production frontend
+        working-directory: w4-gate/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+        run: |
+          npm run start -- -H 127.0.0.1 -p 3000 > /tmp/w4-web.log 2>&1 &
+          echo $! > /tmp/w4-web.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/w4-web.log
+          exit 1
+      - name: Smoke real pages
+        run: |
+          curl -fsS http://127.0.0.1:3000/ | tee /tmp/home.html | grep -q 'MoonStone'
+          curl -fsS 'http://127.0.0.1:3000/search?status=UPCOMING' | tee /tmp/search.html | grep -q 'Bay-Valley Hacks'
+          curl -fsS http://127.0.0.1:3000/hackathons/moonstone-4b6701b9 | tee /tmp/detail.html | grep -q 'MoonStone'
+          curl -fsS http://127.0.0.1:3000/library | tee /tmp/library.html | grep -Eq 'Sign in|Library|saved'
+      - name: Evidence
+        if: always()
+        run: |
+          echo '=== API ==='
+          tail -100 /tmp/w4-api.log || true
+          echo '=== WEB ==='
+          tail -100 /tmp/w4-web.log || true
