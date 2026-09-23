@@ -1,0 +1,69 @@
+name: Hackathon W5 Gate
+on:
+  push:
+    branches: ['tmp/hackathon-w5-gate']
+permissions:
+  contents: read
+jobs:
+  w5-gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Extract W4 validated baseline and overlay W5 web
+        run: |
+          mkdir -p w4-gate
+          base64 -d w4-web-gate.tar.xz.b64 > /tmp/w4-web-gate.tar.xz
+          tar -xJf /tmp/w4-web-gate.tar.xz -C w4-gate
+          cp w5_overrides/types.ts w4-gate/apps/web/lib/types.ts
+          cp w5_overrides/PreferenceEditor.tsx w4-gate/apps/web/components/PreferenceEditor.tsx
+          cp w5_overrides/SavedSearchManager.tsx w4-gate/apps/web/components/SavedSearchManager.tsx
+          cp w5_overrides/layout.tsx w4-gate/apps/web/app/layout.tsx
+          mkdir -p w4-gate/apps/web/app/preferences w4-gate/apps/web/app/recommendations w4-gate/apps/web/app/saved-searches w4-gate/apps/web/app/alerts
+          cp w5_overrides/preferences_page.tsx w4-gate/apps/web/app/preferences/page.tsx
+          cp w5_overrides/recommendations_page.tsx w4-gate/apps/web/app/recommendations/page.tsx
+          cp w5_overrides/saved_searches_page.tsx w4-gate/apps/web/app/saved-searches/page.tsx
+          cp w5_overrides/alerts_page.tsx w4-gate/apps/web/app/alerts/page.tsx
+      - name: Start factual W2 snapshot API
+        run: |
+          python gate/real_api.py > /tmp/w5-api.log 2>&1 &
+          for i in {1..30}; do curl -fsS 'http://127.0.0.1:8787/v1/hackathons?limit=1' >/dev/null && exit 0; sleep 1; done
+          cat /tmp/w5-api.log; exit 1
+      - name: Typecheck and build W5 web
+        working-directory: w4-gate/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
+      - name: Smoke W5 production routes
+        working-directory: w4-gate/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+        run: |
+          npm run start -- -H 127.0.0.1 -p 3000 > /tmp/w5-web.log 2>&1 &
+          for i in {1..30}; do curl -fsS http://127.0.0.1:3000/ >/dev/null && break; sleep 1; done
+          curl -fsS http://127.0.0.1:3000/ | grep -q 'MoonStone'
+          curl -fsS http://127.0.0.1:3000/preferences | grep -Eq 'Sign in|Preferences could not be loaded'
+          curl -fsS http://127.0.0.1:3000/recommendations | grep -Eq 'Sign in|Recommendations could not be generated'
+          curl -fsS http://127.0.0.1:3000/saved-searches | grep -Eq 'Sign in|Saved searches could not be loaded'
+          curl -fsS http://127.0.0.1:3000/alerts | grep -Eq 'Sign in|Alerts could not be loaded'
+      - name: Start Mailpit SMTP sandbox
+        run: |
+          docker run -d --name w5-mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit:latest
+          for i in {1..45}; do curl -fsS http://127.0.0.1:8025/api/v1/info >/dev/null && exit 0; sleep 1; done
+          docker logs w5-mailpit; exit 1
+      - name: Send and inspect real SMTP email
+        run: |
+          mkdir -p w5pkg/hackathon_alerts
+          touch w5pkg/hackathon_alerts/__init__.py
+          cp w5_overrides/delivery.py w5pkg/hackathon_alerts/delivery.py
+          PYTHONPATH=w5pkg python w5_overrides/w5_email_gate.py
