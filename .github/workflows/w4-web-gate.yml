@@ -71,7 +71,7 @@ jobs:
           curl -fsS http://127.0.0.1:3000/ | tee /tmp/home.html | grep -q 'MoonStone'
           curl -fsS 'http://127.0.0.1:3000/search?status=UPCOMING' | tee /tmp/search.html | grep -q 'Bay-Valley Hacks'
           curl -fsS http://127.0.0.1:3000/hackathons/moonstone-4b6701b9 | tee /tmp/detail.html | grep -q 'MoonStone'
-          grep -q 'Eligibility & teams' /tmp/detail.html
+          grep -q 'Eligibility &amp; teams' /tmp/detail.html
           grep -q 'Canonical official event page' /tmp/detail.html
           curl -fsS http://127.0.0.1:3000/library | tee /tmp/library.html | grep -Eq 'Sign in|Library|saved'
       - name: Evidence
