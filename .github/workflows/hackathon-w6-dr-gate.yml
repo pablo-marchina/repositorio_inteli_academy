@@ -25,10 +25,10 @@ jobs:
       - name: Start MinIO and client
         run: |
           mkdir -p /tmp/minio-data /tmp/raw
-          docker run -d --name w6-minio --network host -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin -v /tmp/minio-data:/data minio/minio:latest server /data --address :9000
+          docker run -d --name w6-minio --network host -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin -v /tmp/minio-data:/data quay.io/minio/minio:latest server /data --address :9000
           for i in {1..45}; do curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null && break; sleep 1; done
-          docker run --rm --network host minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin
-          docker run --rm --network host minio/mc:latest mb --ignore-existing local/hackathon-raw
+          docker run --rm --network host quay.io/minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin
+          docker run --rm --network host quay.io/minio/mc:latest mb --ignore-existing local/hackathon-raw
       - name: Seed canonical row and raw object reference
         run: |
           psql "$DATABASE_URL" <<'SQL'
@@ -38,29 +38,29 @@ jobs:
           INSERT INTO raw_documents(hackathon_id,object_storage_key) VALUES(1,'raw/w6/object-1.html');
           SQL
           echo 'official raw html evidence' >/tmp/raw/object-1.html
-          docker run --rm --network host -v /tmp/raw:/raw minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
-          docker run --rm --network host -v /tmp/raw:/raw minio/mc:latest cp /raw/object-1.html local/hackathon-raw/raw/w6/object-1.html
+          docker run --rm --network host -v /tmp/raw:/raw quay.io/minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
+          docker run --rm --network host -v /tmp/raw:/raw quay.io/minio/mc:latest cp /raw/object-1.html local/hackathon-raw/raw/w6/object-1.html
       - name: Backup database and object storage
         run: |
           pg_dump --format=custom --no-owner --no-acl --file=/tmp/w6.dump "$DATABASE_URL"
           mkdir -p /tmp/object-backup
-          docker run --rm --network host -v /tmp/object-backup:/backup minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
-          docker run --rm --network host -v /tmp/object-backup:/backup minio/mc:latest cp --recursive local/hackathon-raw/ /backup/
+          docker run --rm --network host -v /tmp/object-backup:/backup quay.io/minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
+          docker run --rm --network host -v /tmp/object-backup:/backup quay.io/minio/mc:latest cp --recursive local/hackathon-raw/ /backup/
           sha256sum /tmp/w6.dump /tmp/object-backup/raw/w6/object-1.html | tee /tmp/backup.sha256
       - name: Destroy and restore
         run: |
           psql "$DATABASE_URL" -c 'DROP TABLE raw_documents; DROP TABLE hackathons;'
-          docker run --rm --network host minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
-          docker run --rm --network host minio/mc:latest rm --recursive --force local/hackathon-raw/
+          docker run --rm --network host quay.io/minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
+          docker run --rm --network host quay.io/minio/mc:latest rm --recursive --force local/hackathon-raw/
           pg_restore --clean --if-exists --no-owner --no-acl --dbname="$DATABASE_URL" /tmp/w6.dump
-          docker run --rm --network host -v /tmp/object-backup:/backup minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
-          docker run --rm --network host -v /tmp/object-backup:/backup minio/mc:latest cp --recursive /backup/ local/hackathon-raw/
+          docker run --rm --network host -v /tmp/object-backup:/backup quay.io/minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
+          docker run --rm --network host -v /tmp/object-backup:/backup quay.io/minio/mc:latest cp --recursive /backup/ local/hackathon-raw/
       - name: Verify clean recovery
         run: |
           test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM hackathons')" = '1'
           test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM raw_documents')" = '1'
           mkdir -p /tmp/restored
-          docker run --rm --network host -v /tmp/restored:/restored minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
-          docker run --rm --network host -v /tmp/restored:/restored minio/mc:latest cp local/hackathon-raw/raw/w6/object-1.html /restored/object-1.html
+          docker run --rm --network host -v /tmp/restored:/restored quay.io/minio/mc:latest alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
+          docker run --rm --network host -v /tmp/restored:/restored quay.io/minio/mc:latest cp local/hackathon-raw/raw/w6/object-1.html /restored/object-1.html
           test "$(cat /tmp/restored/object-1.html)" = 'official raw html evidence'
           echo '{"database_restored":true,"raw_reference_restored":true,"object_restored":true,"rpo_hours":24,"rto_hours":2}'
