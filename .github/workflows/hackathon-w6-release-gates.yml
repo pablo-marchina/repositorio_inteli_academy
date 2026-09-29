@@ -38,8 +38,9 @@ jobs:
           pip install 'psycopg[binary]>=3.2,<4' 'boto3>=1.40,<2' 'httpx>=0.28,<1'
       - name: Start MinIO
         run: |
-          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
-          for i in {1..30}; do curl -fsS http://localhost:9000/minio/health/live && break || sleep 1; done
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin quay.io/minio/minio server /data
+          for i in {1..45}; do curl -fsS http://localhost:9000/minio/health/live && break || sleep 1; done
+          curl -fsS http://localhost:9000/minio/health/live
       - name: Disaster recovery drill
         run: python hackathon_w6_gate.py dr
       - name: Production-like load and query-plan gate
@@ -99,7 +100,8 @@ jobs:
           httpx>=0.28,<1.0
           pydantic==2.13.4
           sqlalchemy==2.0.50
-          fastapi==0.128.2
+          fastapi==0.141.1
+          starlette>=1.6.0,<2.0
           alembic==1.20.0
           psycopg[binary]>=3.2,<4.0
           boto3>=1.40,<2.0
