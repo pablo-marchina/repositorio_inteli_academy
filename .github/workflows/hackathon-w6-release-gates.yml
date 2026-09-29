@@ -1,0 +1,116 @@
+name: hackathon-w6-release-gates
+on:
+  push:
+    branches: [tmp/hackathon-w6-release-gates]
+
+jobs:
+  dr-load:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: hackathon
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hackathon -d hackathon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://hackathon:hackathon@localhost:5432/hackathon
+      S3_ENDPOINT_URL: http://localhost:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: hackathon-raw
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install clients
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          pip install 'psycopg[binary]>=3.2,<4' 'boto3>=1.40,<2' 'httpx>=0.28,<1'
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
+          for i in {1..30}; do curl -fsS http://localhost:9000/minio/health/live && break || sleep 1; done
+      - name: Disaster recovery drill
+        run: python hackathon_w6_gate.py dr
+      - name: Production-like load and query-plan gate
+        run: python hackathon_w6_gate.py load
+
+  failure-isolation:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: hackathon
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hackathon -d hackathon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://hackathon:hackathon@localhost:5432/hackathon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install 'psycopg[binary]>=3.2,<4' 'boto3>=1.40,<2' 'httpx>=0.28,<1'
+      - name: Major source failure and recovery
+        run: python hackathon_w6_gate.py failure
+
+  discovery-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install 'psycopg[binary]>=3.2,<4' 'boto3>=1.40,<2' 'httpx>=0.28,<1'
+      - name: Probe authorized Hack Club discovery API
+        run: python hackathon_w6_gate.py probe
+
+  dependency-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Python dependency audit
+        run: |
+          cat > /tmp/w6-requirements.txt <<'EOF'
+          httpx>=0.28,<1.0
+          pydantic==2.13.4
+          sqlalchemy==2.0.50
+          fastapi==0.128.2
+          alembic==1.20.0
+          psycopg[binary]>=3.2,<4.0
+          boto3>=1.40,<2.0
+          EOF
+          pip install pip-audit
+          pip-audit -r /tmp/w6-requirements.txt
+      - name: Web dependency audit
+        run: |
+          mkdir -p /tmp/w6-web && cd /tmp/w6-web
+          cat > package.json <<'EOF'
+          {"private":true,"dependencies":{"next":"16.3.5","react":"19.3.0","react-dom":"19.3.0"},"devDependencies":{"typescript":"7.0.2","eslint":"^9.0.0","eslint-config-next":"16.3.5"}}
+          EOF
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm audit --omit=dev --audit-level=high
