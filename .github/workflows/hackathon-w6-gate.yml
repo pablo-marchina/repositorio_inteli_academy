@@ -34,7 +34,7 @@ jobs:
           psql "$DATABASE_URL" -c "SELECT pg_reload_conf();"
           test "$(psql "$DATABASE_URL" -Atc 'SHOW log_min_duration_statement')" = "50ms"
       - name: Run live discovery, canonical, load/query-plan and failure gates
-        run: python w6_overrides/w6_e2e_gate_v2.py
+        run: python w6_overrides/w6_e2e_gate_v3.py
       - name: Extract validated W4 frontend and overlay W5 surfaces
         run: |
           mkdir -p w6-web
