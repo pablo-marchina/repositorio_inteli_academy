@@ -1,0 +1,78 @@
+name: Hackathon W6 Gate
+on:
+  push:
+    branches: ['tmp/hackathon-w6-gates']
+permissions:
+  contents: read
+jobs:
+  w6-release-gate:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: hackathon
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hackathon -d hackathon"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://hackathon:hackathon@127.0.0.1:5432/hackathon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - uses: actions/setup-node@v5
+        with: {node-version: '22'}
+      - name: Install gate dependencies
+        run: pip install 'psycopg[binary]>=3.2,<4' 'httpx>=0.28,<1' 'beautifulsoup4>=4.14,<5'
+      - name: Enable slow-query logging in staging database
+        run: |
+          psql "$DATABASE_URL" -c "ALTER SYSTEM SET log_min_duration_statement = 50;"
+          psql "$DATABASE_URL" -c "SELECT pg_reload_conf();"
+          test "$(psql "$DATABASE_URL" -Atc 'SHOW log_min_duration_statement')" = "50ms"
+      - name: Run live discovery, canonical, load/query-plan and failure gates
+        run: python w6_overrides/w6_e2e_gate.py
+      - name: Extract validated W4 frontend and overlay W5 surfaces
+        run: |
+          mkdir -p w6-web
+          base64 -d w4-web-gate.tar.xz.b64 > /tmp/w4-web-gate.tar.xz
+          tar -xJf /tmp/w4-web-gate.tar.xz -C w6-web
+          cp w5_overrides/types.ts w6-web/apps/web/lib/types.ts
+          cp w5_overrides/PreferenceEditor.tsx w6-web/apps/web/components/PreferenceEditor.tsx
+          cp w5_overrides/SavedSearchManager.tsx w6-web/apps/web/components/SavedSearchManager.tsx
+          cp w5_overrides/layout.tsx w6-web/apps/web/app/layout.tsx
+          mkdir -p w6-web/apps/web/app/preferences w6-web/apps/web/app/recommendations w6-web/apps/web/app/saved-searches w6-web/apps/web/app/alerts
+          cp w5_overrides/preferences_page.tsx w6-web/apps/web/app/preferences/page.tsx
+          cp w5_overrides/recommendations_page.tsx w6-web/apps/web/app/recommendations/page.tsx
+          cp w5_overrides/saved_searches_page.tsx w6-web/apps/web/app/saved-searches/page.tsx
+          cp w5_overrides/alerts_page.tsx w6-web/apps/web/app/alerts/page.tsx
+      - name: Start live W6 canonical API
+        run: |
+          python w6_overrides/w6_live_api.py >/tmp/w6-api.log 2>&1 &
+          for i in {1..30}; do curl -fsS 'http://127.0.0.1:8787/v1/hackathons?limit=1' >/dev/null && exit 0; sleep 1; done
+          cat /tmp/w6-api.log; exit 1
+      - name: Build production frontend
+        working-directory: w6-web/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
+      - name: Smoke search/detail UI for newly discovered event
+        working-directory: w6-web/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+        run: |
+          npm run start -- -H 127.0.0.1 -p 3000 >/tmp/w6-web.log 2>&1 &
+          for i in {1..30}; do curl -fsS http://127.0.0.1:3000/ >/dev/null && break; sleep 1; done
+          curl -fsS http://127.0.0.1:3000/ | grep -q 'ETHGlobal Mumbai'
+          curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 | grep -q 'ETHGlobal Mumbai'
+          curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 | grep -q 'Official source'
+      - name: Print release evidence
+        run: cat /tmp/w6_e2e.json
