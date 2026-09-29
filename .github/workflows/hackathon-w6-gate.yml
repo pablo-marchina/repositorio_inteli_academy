@@ -27,7 +27,32 @@ jobs:
       - uses: actions/setup-node@v5
         with: {node-version: '22'}
       - name: Install gate dependencies
-        run: pip install 'psycopg[binary]>=3.2,<4' 'httpx>=0.28,<1' 'beautifulsoup4>=4.14,<5'
+        run: pip install 'psycopg[binary]>=3.2,<4' 'httpx>=0.28,<1' 'beautifulsoup4>=4.14,<5' pip-audit
+      - name: Audit Python runtime dependencies
+        run: pip-audit -r w6_overrides/python_runtime_requirements.txt
+      - name: Validate exact W6 migration in isolated schema
+        run: |
+          psql "$DATABASE_URL" <<'SQL'
+          CREATE SCHEMA w6mig;
+          SET search_path TO w6mig,public;
+          CREATE TYPE conflict_severity AS ENUM ('LOW','MEDIUM','HIGH','CRITICAL');
+          CREATE TABLE sources(id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+          CREATE TABLE crawl_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),source_id uuid REFERENCES sources(id));
+          CREATE TABLE hackathons(id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+          CREATE TABLE review_queue_items(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),state text NOT NULL DEFAULT 'OPEN',queue_type text NOT NULL,severity conflict_severity NOT NULL DEFAULT 'LOW',created_at timestamptz NOT NULL DEFAULT now());
+          \i w6_overrides/0006_w6_admin_release_hardening.sql
+          SELECT CASE WHEN to_regclass('w6mig.admin_action_audit') IS NOT NULL
+            AND to_regclass('w6mig.source_anomalies') IS NOT NULL
+            AND to_regclass('w6mig.recrawl_decisions') IS NOT NULL
+            AND to_regclass('w6mig.eval_runs') IS NOT NULL
+            AND to_regclass('w6mig.backup_manifests') IS NOT NULL THEN 1 ELSE 0 END AS migration_ok \gset
+          \if :migration_ok
+          \else
+            \quit 1
+          \endif
+          RESET search_path;
+          DROP SCHEMA w6mig CASCADE;
+          SQL
       - name: Enable slow-query logging in staging database
         run: |
           psql "$DATABASE_URL" -c "ALTER SYSTEM SET log_min_duration_statement = 50;"
@@ -35,7 +60,7 @@ jobs:
           test "$(psql "$DATABASE_URL" -Atc 'SHOW log_min_duration_statement')" = "50ms"
       - name: Run live discovery, canonical, load/query-plan and failure gates
         run: python w6_overrides/w6_e2e_gate_v3.py
-      - name: Extract validated W4 frontend and overlay W5 surfaces
+      - name: Extract validated W4 frontend and overlay W5/W6 surfaces
         run: |
           mkdir -p w6-web
           base64 -d w4-web-gate.tar.xz.b64 > /tmp/w4-web-gate.tar.xz
@@ -43,36 +68,42 @@ jobs:
           cp w5_overrides/types.ts w6-web/apps/web/lib/types.ts
           cp w5_overrides/PreferenceEditor.tsx w6-web/apps/web/components/PreferenceEditor.tsx
           cp w5_overrides/SavedSearchManager.tsx w6-web/apps/web/components/SavedSearchManager.tsx
-          cp w5_overrides/layout.tsx w6-web/apps/web/app/layout.tsx
-          mkdir -p w6-web/apps/web/app/preferences w6-web/apps/web/app/recommendations w6-web/apps/web/app/saved-searches w6-web/apps/web/app/alerts
+          cp w6_overrides/layout.tsx w6-web/apps/web/app/layout.tsx
+          mkdir -p w6-web/apps/web/app/preferences w6-web/apps/web/app/recommendations w6-web/apps/web/app/saved-searches w6-web/apps/web/app/alerts w6-web/apps/web/app/admin
           cp w5_overrides/preferences_page.tsx w6-web/apps/web/app/preferences/page.tsx
           cp w5_overrides/recommendations_page.tsx w6-web/apps/web/app/recommendations/page.tsx
           cp w5_overrides/saved_searches_page.tsx w6-web/apps/web/app/saved-searches/page.tsx
           cp w5_overrides/alerts_page.tsx w6-web/apps/web/app/alerts/page.tsx
+          cp w6_overrides/admin_page.tsx w6-web/apps/web/app/admin/page.tsx
+          cp w6_overrides/admin_actions.ts w6-web/apps/web/app/admin/actions.ts
       - name: Start live W6 canonical API
         run: |
           python w6_overrides/w6_live_api.py >/tmp/w6-api.log 2>&1 &
           for i in {1..30}; do curl -fsS 'http://127.0.0.1:8787/v1/hackathons?limit=1' >/dev/null && exit 0; sleep 1; done
           cat /tmp/w6-api.log; exit 1
-      - name: Build production frontend
+      - name: Build and audit production frontend
         working-directory: w6-web/apps/web
         env:
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
           API_URL: http://127.0.0.1:8787
+          ADMIN_API_KEY: test-admin-server-only
         run: |
           npm install --no-audit --no-fund
+          npm audit --audit-level=high
           npm run typecheck
           npm run build
-      - name: Smoke search/detail UI for newly discovered event
+      - name: Smoke search/detail/admin UI for newly discovered event
         working-directory: w6-web/apps/web
         env:
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
           API_URL: http://127.0.0.1:8787
+          ADMIN_API_KEY: test-admin-server-only
         run: |
           npm run start -- -H 127.0.0.1 -p 3000 >/tmp/w6-web.log 2>&1 &
           for i in {1..30}; do curl -fsS http://127.0.0.1:3000/ >/dev/null && break; sleep 1; done
           curl -fsS http://127.0.0.1:3000/ | grep -q 'ETHGlobal Mumbai'
           curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 | grep -q 'ETHGlobal Mumbai'
-          curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 | grep -q 'Official source'
+          curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 | grep -q 'Canonical official event page'
+          curl -fsS http://127.0.0.1:3000/admin | grep -q 'Admin'
       - name: Print release evidence
         run: cat /tmp/w6_e2e.json
