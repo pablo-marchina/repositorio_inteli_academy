@@ -1,0 +1,115 @@
+name: Hackathon W6 E2E Acceptance
+on:
+  push:
+    branches: ['tmp/hackathon-w6-e2e-gate']
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run live unknown-candidate acceptance
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx
+          python w6_e2e/w6_live_gate.py --out w6-e2e-evidence.json
+          python - <<'PY'
+          import json
+          x=json.load(open('w6-e2e-evidence.json'))
+          assert x['candidate_discovery']['automatic'] is True
+          assert x['classification']['is_hackathon_like'] is True
+          assert x['successful_related_source_count'] >= 1
+          assert len(x['source_observations']) >= 10
+          assert x['dedup']['ran'] and x['series']['ran']
+          assert x['canonical']['provenance_count'] >= 10
+          assert x['canonical']['history']
+          assert x['eligibility']['result'] == 'ELIGIBLE'
+          assert x['eligibility']['passes']
+          assert x['recommendation']['score'] is not None
+          assert x['recommendation']['positive_reasons']
+          assert x['alert']['alert_type'] == 'deadline_changed'
+          assert x['admin_uncertain_decisions'], 'expected independent-source coverage uncertainty'
+          print(json.dumps({
+            'candidate':x['snapshot']['name'],
+            'discovery_provider':x['candidate_discovery']['provider'],
+            'related_sources':x['successful_related_source_count'],
+            'observations':len(x['source_observations']),
+            'eligibility':x['eligibility']['result'],
+            'recommendation_score':x['recommendation']['score'],
+            'alert':x['alert']['alert_type'],
+            'admin_review_items':len(x['admin_uncertain_decisions'])
+          },indent=2))
+          PY
+
+      - name: Start evidence-backed canonical/admin API
+        run: |
+          python w6_e2e/w6_snapshot_api.py >/tmp/w6-api.log 2>&1 &
+          for i in {1..30}; do curl -fsS 'http://127.0.0.1:8787/v1/hackathons?q=MPOnline' >/dev/null && exit 0; sleep 1; done
+          cat /tmp/w6-api.log; exit 1
+
+      - name: Extract validated W4 baseline and overlay W5/W6
+        run: |
+          mkdir -p w4-gate
+          base64 -d w4-web-gate.tar.xz.b64 > /tmp/w4-web-gate.tar.xz
+          tar -xJf /tmp/w4-web-gate.tar.xz -C w4-gate
+          cp w5_overrides/types.ts w4-gate/apps/web/lib/types.ts
+          cp w5_overrides/PreferenceEditor.tsx w4-gate/apps/web/components/PreferenceEditor.tsx
+          cp w5_overrides/SavedSearchManager.tsx w4-gate/apps/web/components/SavedSearchManager.tsx
+          cp w5_overrides/layout.tsx w4-gate/apps/web/app/layout.tsx
+          mkdir -p w4-gate/apps/web/app/preferences w4-gate/apps/web/app/recommendations w4-gate/apps/web/app/saved-searches w4-gate/apps/web/app/alerts
+          cp w5_overrides/preferences_page.tsx w4-gate/apps/web/app/preferences/page.tsx
+          cp w5_overrides/recommendations_page.tsx w4-gate/apps/web/app/recommendations/page.tsx
+          cp w5_overrides/saved_searches_page.tsx w4-gate/apps/web/app/saved-searches/page.tsx
+          cp w5_overrides/alerts_page.tsx w4-gate/apps/web/app/alerts/page.tsx
+          mkdir -p w4-gate/apps/web/app/admin
+          cp w6_overrides/admin_page.tsx w4-gate/apps/web/app/admin/page.tsx
+          cp w6_overrides/admin_actions.ts w4-gate/apps/web/app/admin/actions.ts
+          cp w6_overrides/admin_layout.tsx w4-gate/apps/web/app/admin/layout.tsx
+
+      - name: Typecheck and build real product UI
+        working-directory: w4-gate/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+          ADMIN_UI_ENABLED: 'true'
+          ADMIN_API_KEY: gate-admin-key
+          ADMIN_ACTOR: w6-e2e
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
+
+      - name: Smoke search, detail and admin surfaces
+        working-directory: w4-gate/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+          ADMIN_UI_ENABLED: 'true'
+          ADMIN_API_KEY: gate-admin-key
+          ADMIN_ACTOR: w6-e2e
+        run: |
+          npm run start -- -H 127.0.0.1 -p 3000 >/tmp/w6-web.log 2>&1 &
+          for i in {1..45}; do curl -fsS http://127.0.0.1:3000/ >/dev/null && break; sleep 1; done
+          curl -fsS 'http://127.0.0.1:3000/search?q=MPOnline' | tee /tmp/search.html | grep -q 'MPOnline'
+          curl -fsS 'http://127.0.0.1:3000/hackathons/mponline-idea-innovation-hackathon-2026' | tee /tmp/detail.html | grep -q 'Eligibility &amp; teams'
+          grep -q 'Freshness, changes &amp; evidence' /tmp/detail.html
+          grep -q 'Canonical official event page' /tmp/detail.html
+          curl -fsS 'http://127.0.0.1:3000/admin' | tee /tmp/admin.html | grep -q 'Admin &amp; data-quality control plane'
+          grep -q 'source_coverage' /tmp/admin.html
+          grep -q 'single independent official network document' /tmp/admin.html
+          echo '{"search_ui":true,"detail_ui":true,"admin_ui":true}' > w6-ui-smoke.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: w6-e2e-evidence
+          path: |
+            w6-e2e-evidence.json
+            w4-gate/apps/web/w6-ui-smoke.json
