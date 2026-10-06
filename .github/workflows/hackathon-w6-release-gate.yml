@@ -33,7 +33,7 @@ jobs:
 
       - name: Start MinIO
         run: |
-          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio:latest server /data
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin quay.io/minio/minio:latest server /data
           for i in {1..30}; do curl -fsS http://localhost:9000/minio/health/live && break || sleep 2; done
 
       - uses: actions/setup-python@v5
