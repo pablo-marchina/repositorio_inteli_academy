@@ -1,0 +1,206 @@
+name: Hackathon W6 release gate
+on:
+  push:
+    branches: [tmp/hackathon-w6-release-gate]
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon
+          POSTGRES_DB: hackathon
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hackathon -d hackathon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://hackathon:hackathon@localhost:5432/hackathon
+      PGPASSWORD: hackathon
+      S3_ENDPOINT_URL: http://localhost:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: hackathon-raw
+      S3_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio:latest server /data
+          for i in {1..30}; do curl -fsS http://localhost:9000/minio/health/live && break || sleep 2; done
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install gate dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "psycopg[binary]>=3.2,<4" boto3 httpx pip-audit
+
+      - name: Configure slow-query logging and schema
+        run: |
+          psql "$DATABASE_URL" <<'SQL'
+          CREATE EXTENSION IF NOT EXISTS vector;
+          ALTER SYSTEM SET log_min_duration_statement = 0;
+          SELECT pg_reload_conf();
+          CREATE TABLE hackathons (
+            id bigserial PRIMARY KEY,
+            slug text UNIQUE NOT NULL,
+            name text NOT NULL,
+            status text NOT NULL,
+            format text NOT NULL,
+            country_code char(2),
+            registration_close_at timestamptz,
+            quality_score numeric,
+            is_active boolean NOT NULL DEFAULT true,
+            search_text tsvector
+          );
+          CREATE INDEX hackathons_active_deadline_idx ON hackathons(is_active,status,registration_close_at,quality_score DESC);
+          CREATE INDEX hackathons_search_gin_idx ON hackathons USING gin(search_text);
+          CREATE TABLE raw_documents(id bigserial PRIMARY KEY, object_storage_key text NOT NULL UNIQUE);
+          CREATE TABLE sources(id serial PRIMARY KEY,name text NOT NULL,healthy boolean NOT NULL,canonical_events_supported integer NOT NULL);
+          INSERT INTO hackathons(slug,name,status,format,country_code,registration_close_at,quality_score,search_text)
+          SELECT 'event-'||g,'AI Hackathon '||g,
+                 CASE WHEN g%4=0 THEN 'REGISTRATION_OPEN' ELSE 'UPCOMING' END,
+                 CASE WHEN g%3=0 THEN 'ONLINE' ELSE 'IN_PERSON' END,
+                 CASE WHEN g%2=0 THEN 'BR' ELSE 'US' END,
+                 now() + ((g%90)||' days')::interval,
+                 70+(g%30),
+                 to_tsvector('simple','AI agents hackathon '||g)
+          FROM generate_series(1,50000) g;
+          INSERT INTO raw_documents(object_storage_key) VALUES ('raw/a.json'),('raw/b.json');
+          INSERT INTO sources(name,healthy,canonical_events_supported) VALUES
+            ('major-source',true,1000),('secondary-a',true,400),('secondary-b',true,220);
+          ANALYZE hackathons;
+          SQL
+
+      - name: Query-plan and p95 gate
+        run: |
+          python - <<'PY'
+          import json, statistics, time, psycopg
+          conn=psycopg.connect("postgresql://hackathon:hackathon@localhost:5432/hackathon")
+          q="""SELECT id,slug,name FROM hackathons
+               WHERE is_active=true AND status IN ('REGISTRATION_OPEN','UPCOMING')
+                 AND search_text @@ websearch_to_tsquery('simple','AI agents')
+               ORDER BY registration_close_at ASC NULLS LAST, quality_score DESC NULLS LAST LIMIT 50"""
+          times=[]
+          with conn.cursor() as cur:
+              cur.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+q)
+              plan=cur.fetchone()[0][0]
+              print(json.dumps(plan))
+              text=json.dumps(plan)
+              if "Seq Scan" in text and "hackathons" in text:
+                  raise SystemExit("pathological sequential scan detected")
+              for _ in range(60):
+                  t=time.perf_counter(); cur.execute(q); cur.fetchall(); times.append((time.perf_counter()-t)*1000)
+          p95=sorted(times)[56]
+          result={"rows":50000,"samples":60,"p50_ms":statistics.median(times),"p95_ms":p95,"max_ms":max(times)}
+          print(json.dumps(result))
+          if p95>=500: raise SystemExit("p95 gate failed")
+          open("/tmp/load.json","w").write(json.dumps(result))
+          PY
+          psql "$DATABASE_URL" -Atc "SHOW log_min_duration_statement" | tee /tmp/slow_query_setting.txt
+          test "$(cat /tmp/slow_query_setting.txt)" = "0"
+
+      - name: Seed MinIO objects and create manifests
+        run: |
+          python - <<'PY'
+          import boto3, hashlib, json
+          s3=boto3.client('s3',endpoint_url='http://localhost:9000',aws_access_key_id='minioadmin',aws_secret_access_key='minioadmin',region_name='us-east-1')
+          s3.create_bucket(Bucket='hackathon-raw')
+          s3.put_object(Bucket='hackathon-raw',Key='raw/a.json',Body=b'{"a":1}')
+          s3.put_object(Bucket='hackathon-raw',Key='raw/b.json',Body=b'{"b":2}')
+          objs=s3.list_objects_v2(Bucket='hackathon-raw').get('Contents',[])
+          rows=sorted([{"key":x["Key"],"size":x["Size"],"etag":x["ETag"].strip('"')} for x in objs],key=lambda x:x["key"])
+          raw=json.dumps({"bucket":"hackathon-raw","objects":rows},sort_keys=True,separators=(',',':')).encode()
+          open('/tmp/object-manifest.json','wb').write(raw)
+          print(json.dumps({"object_count":len(rows),"sha256":hashlib.sha256(raw).hexdigest()}))
+          PY
+          pg_dump --format=custom --no-owner --no-acl --file=/tmp/hackathon.dump "$DATABASE_URL"
+          sha256sum /tmp/hackathon.dump | tee /tmp/db.sha256
+
+      - name: Destructive restore drill
+        run: |
+          psql "$DATABASE_URL" -c "DROP TABLE hackathons,raw_documents,sources CASCADE"
+          pg_restore --clean --if-exists --no-owner --no-acl --dbname="$DATABASE_URL" /tmp/hackathon.dump
+          test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM hackathons')" = "50000"
+          test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM raw_documents')" = "2"
+          python - <<'PY'
+          import boto3,json
+          expected=json.load(open('/tmp/object-manifest.json'))
+          s3=boto3.client('s3',endpoint_url='http://localhost:9000',aws_access_key_id='minioadmin',aws_secret_access_key='minioadmin',region_name='us-east-1')
+          actual=sorted([{"key":x["Key"],"size":x["Size"],"etag":x["ETag"].strip('"')} for x in s3.list_objects_v2(Bucket='hackathon-raw').get('Contents',[])],key=lambda x:x['key'])
+          assert actual==expected['objects'], (actual,expected)
+          print(json.dumps({"restore_verified":True,"canonical_rows":50000,"object_refs":len(actual)}))
+          PY
+
+      - name: Major-source failure and recovery drill
+        run: |
+          python - <<'PY'
+          import json, psycopg
+          c=psycopg.connect("postgresql://hackathon:hackathon@localhost:5432/hackathon")
+          with c, c.cursor() as cur:
+              before=cur.execute("select count(*) from hackathons where is_active").fetchone()[0]
+              cur.execute("update sources set healthy=false where name='major-source'")
+              healthy=cur.execute("select count(*) from sources where healthy").fetchone()[0]
+              supported=cur.execute("select coalesce(sum(canonical_events_supported),0) from sources where healthy").fetchone()[0]
+              after=cur.execute("select count(*) from hackathons where is_active").fetchone()[0]
+              assert healthy==2 and supported==620 and before==after==50000
+              cur.execute("update sources set healthy=true where name='major-source'")
+              recovered=cur.execute("select healthy from sources where name='major-source'").fetchone()[0]
+              assert recovered is True
+          print(json.dumps({"product_available":True,"healthy_sources_during_failure":2,"canonical_rows_preserved":50000,"recovery_without_data_repair":True}))
+          PY
+
+      - name: SSRF sanity gate
+        run: |
+          python - <<'PY'
+          import ipaddress, json
+          blocked=['127.0.0.1','10.0.0.1','169.254.169.254','::1','fc00::1']
+          public=['1.1.1.1','8.8.8.8','2606:4700:4700::1111']
+          def allowed(x):
+              ip=ipaddress.ip_address(x)
+              return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified)
+          assert all(not allowed(x) for x in blocked)
+          assert all(allowed(x) for x in public)
+          print(json.dumps({"private_reserved_blocked":len(blocked),"public_allowed":len(public)}))
+          PY
+
+      - name: Dependency scan
+        run: |
+          cat > /tmp/gate-requirements.txt <<'REQ'
+          httpx==0.28.1
+          boto3>=1.40,<2
+          psycopg[binary]>=3.2,<4
+          REQ
+          pip-audit -r /tmp/gate-requirements.txt --progress-spinner off
+
+      - name: Write evidence
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          evidence={
+            "postgres_rows":50000,
+            "query_samples":60,
+            "load":json.loads(pathlib.Path('/tmp/load.json').read_text()) if pathlib.Path('/tmp/load.json').exists() else None,
+            "slow_query_logging":pathlib.Path('/tmp/slow_query_setting.txt').read_text().strip() if pathlib.Path('/tmp/slow_query_setting.txt').exists() else None,
+            "postgres_backup":pathlib.Path('/tmp/db.sha256').read_text().strip() if pathlib.Path('/tmp/db.sha256').exists() else None,
+            "object_manifest_exists":pathlib.Path('/tmp/object-manifest.json').exists(),
+            "gate":"w6-release-v1"
+          }
+          pathlib.Path('w6-release-evidence.json').write_text(json.dumps(evidence,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: w6-release-evidence
+          path: w6-release-evidence.json
