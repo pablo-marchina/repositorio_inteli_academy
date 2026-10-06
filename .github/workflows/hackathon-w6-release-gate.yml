@@ -78,7 +78,7 @@ jobs:
                  CASE WHEN g%2=0 THEN 'BR' ELSE 'US' END,
                  now() + ((g%90)||' days')::interval,
                  70+(g%30),
-                 to_tsvector('simple','AI agents hackathon '||g)
+                 to_tsvector('simple',(CASE WHEN g%20=0 THEN 'AI agents hackathon ' ELSE 'general innovation event ' END)||g)
           FROM generate_series(1,50000) g;
           INSERT INTO raw_documents(object_storage_key) VALUES ('raw/a.json'),('raw/b.json');
           INSERT INTO sources(name,healthy,canonical_events_supported) VALUES
