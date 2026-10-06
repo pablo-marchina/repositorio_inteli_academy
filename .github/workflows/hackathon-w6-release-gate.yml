@@ -23,18 +23,19 @@ jobs:
     env:
       DATABASE_URL: postgresql://hackathon:hackathon@localhost:5432/hackathon
       PGPASSWORD: hackathon
-      S3_ENDPOINT_URL: http://localhost:9000
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
+      S3_ENDPOINT_URL: http://localhost:4566
+      S3_ACCESS_KEY: test
+      S3_SECRET_KEY: test
       S3_BUCKET: hackathon-raw
       S3_REGION: us-east-1
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start MinIO
+      - name: Start S3-compatible object storage
         run: |
-          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin quay.io/minio/minio:latest server /data
-          for i in {1..30}; do curl -fsS http://localhost:9000/minio/health/live && break || sleep 2; done
+          docker run -d --name localstack -p 4566:4566 -e SERVICES=s3 -e DEBUG=0 localstack/localstack:latest
+          for i in {1..45}; do curl -fsS http://localhost:4566/_localstack/health | grep -q '"s3"' && break || sleep 2; done
+          curl -fsS http://localhost:4566/_localstack/health
 
       - uses: actions/setup-python@v5
         with:
@@ -114,7 +115,7 @@ jobs:
         run: |
           python - <<'PY'
           import boto3, hashlib, json
-          s3=boto3.client('s3',endpoint_url='http://localhost:9000',aws_access_key_id='minioadmin',aws_secret_access_key='minioadmin',region_name='us-east-1')
+          s3=boto3.client('s3',endpoint_url='http://localhost:4566',aws_access_key_id='test',aws_secret_access_key='test',region_name='us-east-1')
           s3.create_bucket(Bucket='hackathon-raw')
           s3.put_object(Bucket='hackathon-raw',Key='raw/a.json',Body=b'{"a":1}')
           s3.put_object(Bucket='hackathon-raw',Key='raw/b.json',Body=b'{"b":2}')
@@ -136,7 +137,7 @@ jobs:
           python - <<'PY'
           import boto3,json
           expected=json.load(open('/tmp/object-manifest.json'))
-          s3=boto3.client('s3',endpoint_url='http://localhost:9000',aws_access_key_id='minioadmin',aws_secret_access_key='minioadmin',region_name='us-east-1')
+          s3=boto3.client('s3',endpoint_url='http://localhost:4566',aws_access_key_id='test',aws_secret_access_key='test',region_name='us-east-1')
           actual=sorted([{"key":x["Key"],"size":x["Size"],"etag":x["ETag"].strip('"')} for x in s3.list_objects_v2(Bucket='hackathon-raw').get('Contents',[])],key=lambda x:x['key'])
           assert actual==expected['objects'], (actual,expected)
           print(json.dumps({"restore_verified":True,"canonical_rows":50000,"object_refs":len(actual)}))
