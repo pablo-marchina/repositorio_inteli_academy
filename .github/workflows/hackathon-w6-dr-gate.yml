@@ -26,8 +26,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install and start real MinIO server/client
         run: |
-          curl -fsSL https://dl.min.io/aistor/minio/release/linux-amd64/minio -o /tmp/minio
-          curl -fsSL https://dl.min.io/aistor/mc/release/linux-amd64/mc -o /tmp/mc
+          curl -fsSL https://dl.min.io/community/server/minio/release/linux-amd64/minio -o /tmp/minio
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
           chmod +x /tmp/minio /tmp/mc
           mkdir -p /tmp/minio-data /tmp/raw
           /tmp/minio server /tmp/minio-data --address :9000 >/tmp/minio.log 2>&1 &
