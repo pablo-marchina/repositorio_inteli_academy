@@ -109,6 +109,10 @@ jobs:
           for i in {1..30}; do curl -fsS http://127.0.0.1:3000/ >/dev/null && break; sleep 1; done
           curl -fsS 'http://127.0.0.1:3000/search?q=ETHGlobal%20Mumbai' -o /tmp/search.html
           curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 -o /tmp/detail.html
+          echo 'ADMIN API direct checks'
+          curl -fsS -H 'x-admin-key: test-admin-server-only' 'http://127.0.0.1:8787/admin/review-queue?queue_type=LOW_CONFIDENCE&limit=25' | tee /tmp/admin-queue.json
+          curl -fsS -H 'x-admin-key: test-admin-server-only' 'http://127.0.0.1:8787/admin/source-health' | tee /tmp/admin-health.json
+          curl -fsS -H 'x-admin-key: test-admin-server-only' 'http://127.0.0.1:8787/admin/quality/summary' | tee /tmp/admin-quality.json
           curl -fsS http://127.0.0.1:3000/admin -o /tmp/admin.html
           curl -fsS http://127.0.0.1:8787/v1/hackathons/ethglobal-mumbai-2026 -o /tmp/detail.json
           echo "search bytes=$(wc -c </tmp/search.html) detail bytes=$(wc -c </tmp/detail.html) admin bytes=$(wc -c </tmp/admin.html)"
@@ -116,7 +120,9 @@ jobs:
           echo 'ASSERT detail-event'; grep -q 'ETHGlobal Mumbai' /tmp/detail.html
           echo 'ASSERT canonical-provenance-history'
           python -c "import json; d=json.load(open('/tmp/detail.json')); assert d['evidence'] and d['evidence'][0]['source_name']=='ETHGlobal'; assert d['evidence'][0]['evidence_text']=='Canonical official event page'; assert d['recent_changes'] and d['recent_changes'][0]['change_type']=='REGISTRATION_OPEN'; assert d['links'] and d['links'][0]['is_official'] is True; print('CANONICAL_PROVENANCE_HISTORY_PASS')"
-          echo 'ASSERT admin-queue'; grep -q 'LOW_CONFIDENCE' /tmp/admin.html
+          echo 'ASSERT admin-queue-api'; grep -q 'LOW_CONFIDENCE' /tmp/admin-queue.json
+          echo 'ADMIN HTML HEAD'; head -c 2500 /tmp/admin.html; echo
+          echo 'ASSERT admin-queue-ui'; grep -q 'LOW_CONFIDENCE' /tmp/admin.html
           echo 'ASSERT admin-prize'; grep -qi 'prize' /tmp/admin.html
           echo 'ALL_UI_SMOKES_PASS'
       - name: Print release evidence
