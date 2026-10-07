@@ -22,18 +22,31 @@ jobs:
       DATABASE_URL: postgresql://hackathon:hackathon@127.0.0.1:5432/hackathon
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_IMAGE: minio/minio:RELEASE.2025-09-07T16-13-09Z
+      MC_IMAGE: minio/mc:RELEASE.2025-08-13T08-35-41Z
     steps:
       - uses: actions/checkout@v4
-      - name: Install and start real MinIO server/client
+      - name: Start pinned community MinIO container
         run: |
-          curl -fsSL https://dl.min.io/community/server/minio/release/linux-amd64/minio -o /tmp/minio
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
-          chmod +x /tmp/minio /tmp/mc
-          mkdir -p /tmp/minio-data /tmp/raw
-          /tmp/minio server /tmp/minio-data --address :9000 >/tmp/minio.log 2>&1 &
-          for i in {1..45}; do curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null && break; sleep 1; done
-          /tmp/mc alias set local http://127.0.0.1:9000 minioadmin minioadmin
-          /tmp/mc mb --ignore-existing local/hackathon-raw
+          docker pull "$MINIO_IMAGE"
+          docker pull "$MC_IMAGE"
+          docker run -d --name w6-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            "$MINIO_IMAGE" server /data --address :9000
+          for i in {1..45}; do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null
+          mkdir -p /tmp/mc-config /tmp/raw
+          docker run --rm --network host \
+            -v /tmp/mc-config:/root/.mc \
+            "$MC_IMAGE" alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+          docker run --rm --network host \
+            -v /tmp/mc-config:/root/.mc \
+            "$MC_IMAGE" mb --ignore-existing local/hackathon-raw
       - name: Seed canonical row and raw object reference
         run: |
           psql "$DATABASE_URL" <<'SQL'
@@ -43,24 +56,42 @@ jobs:
           INSERT INTO raw_documents(hackathon_id,object_storage_key) VALUES(1,'raw/w6/object-1.html');
           SQL
           echo 'official raw html evidence' >/tmp/raw/object-1.html
-          /tmp/mc cp /tmp/raw/object-1.html local/hackathon-raw/raw/w6/object-1.html
+          docker run --rm --network host \
+            -v /tmp/mc-config:/root/.mc \
+            -v /tmp/raw:/work:ro \
+            "$MC_IMAGE" cp /work/object-1.html local/hackathon-raw/raw/w6/object-1.html
       - name: Backup database and object storage
         run: |
           pg_dump --format=custom --no-owner --no-acl --file=/tmp/w6.dump "$DATABASE_URL"
           mkdir -p /tmp/object-backup
-          /tmp/mc cp --recursive local/hackathon-raw/ /tmp/object-backup/
+          docker run --rm --network host \
+            -v /tmp/mc-config:/root/.mc \
+            -v /tmp/object-backup:/backup \
+            "$MC_IMAGE" cp --recursive local/hackathon-raw/ /backup/
           sha256sum /tmp/w6.dump /tmp/object-backup/raw/w6/object-1.html | tee /tmp/backup.sha256
       - name: Destroy and restore
         run: |
           psql "$DATABASE_URL" -c 'DROP TABLE raw_documents; DROP TABLE hackathons;'
-          /tmp/mc rm --recursive --force local/hackathon-raw/
+          docker run --rm --network host \
+            -v /tmp/mc-config:/root/.mc \
+            "$MC_IMAGE" rm --recursive --force local/hackathon-raw/
           pg_restore --clean --if-exists --no-owner --no-acl --dbname="$DATABASE_URL" /tmp/w6.dump
-          /tmp/mc cp --recursive /tmp/object-backup/ local/hackathon-raw/
+          docker run --rm --network host \
+            -v /tmp/mc-config:/root/.mc \
+            -v /tmp/object-backup:/backup:ro \
+            "$MC_IMAGE" cp --recursive /backup/ local/hackathon-raw/
       - name: Verify clean recovery
         run: |
           test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM hackathons')" = '1'
           test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM raw_documents')" = '1'
           mkdir -p /tmp/restored
-          /tmp/mc cp local/hackathon-raw/raw/w6/object-1.html /tmp/restored/object-1.html
+          docker run --rm --network host \
+            -v /tmp/mc-config:/root/.mc \
+            -v /tmp/restored:/restore \
+            "$MC_IMAGE" cp local/hackathon-raw/raw/w6/object-1.html /restore/object-1.html
           test "$(cat /tmp/restored/object-1.html)" = 'official raw html evidence'
+          test "$(psql "$DATABASE_URL" -Atc "SELECT object_storage_key FROM raw_documents WHERE id=1")" = 'raw/w6/object-1.html'
           echo '{"database_restored":true,"raw_reference_restored":true,"object_restored":true,"rpo_hours":24,"rto_hours":2}'
+      - name: Cleanup MinIO container
+        if: always()
+        run: docker rm -f w6-minio >/dev/null 2>&1 || true
