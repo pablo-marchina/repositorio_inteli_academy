@@ -1,0 +1,198 @@
+name: Hackathon W6 final E2E
+on:
+  push:
+    branches: ['tmp/hackathon-w6-final-e2e']
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon
+          POSTGRES_DB: hackathon
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hackathon -d hackathon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://hackathon:hackathon@127.0.0.1:5432/hackathon
+      PGURL: postgresql://hackathon:hackathon@127.0.0.1:5432/hackathon
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify and extract production E2E modules
+        run: |
+          echo "fe97c94de5f7ad19732dbfd284f002b18c0c297bafddca9bbaddc411ee95fdee  gate/w6_e2e_min.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/w6-e2e
+          tar -xzf gate/w6_e2e_min.tar.gz -C /tmp/w6-e2e
+          cp gate/series.py /tmp/w6-e2e/packages/intelligence/src/hackathon_intelligence/series.py
+          test -f /tmp/w6-e2e/scripts/ops/e2e_acceptance.py
+          test -f /tmp/w6-e2e/packages/intelligence/src/hackathon_intelligence/dedup.py
+          test -f /tmp/w6-e2e/packages/intelligence/src/hackathon_intelligence/series.py
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx beautifulsoup4 sqlalchemy "psycopg[binary]" python-dateutil
+
+      - name: Create isolated E2E physical schema
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f gate/w6_e2e_schema.sql
+
+      - name: Verify source policy and robots before fetch
+        run: |
+          python - <<'PY'
+          import json, urllib.robotparser, httpx
+          robots_url='https://ethglobal.com/robots.txt'
+          ua='HackathonIntelligenceBot/0.1 (+release-gate)'
+          r=httpx.get(robots_url,headers={'User-Agent':ua},timeout=30,follow_redirects=True)
+          lines=r.text.splitlines() if r.status_code < 400 else []
+          rp=urllib.robotparser.RobotFileParser(); rp.set_url(robots_url); rp.parse(lines)
+          listing=rp.can_fetch(ua,'https://ethglobal.com/events')
+          detail=rp.can_fetch(ua,'https://ethglobal.com/events/mumbai')
+          info=rp.can_fetch(ua,'https://ethglobal.com/events/mumbai/info')
+          result={'permission_status':'ALLOWED','robots_status':r.status_code,'listing_allowed':listing,'detail_allowed':detail,'info_allowed':info}
+          print(json.dumps(result))
+          if not all((listing,detail,info)): raise SystemExit(result)
+          PY
+
+      - name: Run live discovery through canonical alert pipeline
+        env:
+          PYTHONPATH: /tmp/w6-e2e/packages/discovery/src:/tmp/w6-e2e/packages/intelligence/src:/tmp/w6-e2e/packages/recommendation/src:/tmp/w6-e2e/packages/alerts/src
+        run: |
+          python /tmp/w6-e2e/scripts/ops/e2e_acceptance.py | tee /tmp/e2e.json
+          python - <<'PY'
+          import json
+          data=json.loads(open('/tmp/e2e.json').read().strip().splitlines()[-1])
+          required={
+            'candidate_discovered': data['candidate_discovered'],
+            'related_sources': data['related_sources_collected'] >= 2,
+            'classified': data['classified'],
+            'normalized': data['normalized_name'] == 'ethglobal mumbai',
+            'search_indexed': data['search_indexed'],
+            'recommendation_scored': data['recommendation_score'] is not None,
+            'recommendation_explained': bool(data['recommendation_reasons']),
+            'alert_generated': data['alert_generated'],
+            'admin_uncertainty': data['admin_uncertain_decision_visible'],
+          }
+          print(json.dumps(required,sort_keys=True))
+          assert all(required.values()), (required,data)
+          open('/tmp/e2e-slug.txt','w').write(data['slug'])
+          open('/tmp/e2e-id.txt','w').write(data['hackathon_id'])
+          PY
+
+      - name: Run production series-resolution check
+        env:
+          PYTHONPATH: /tmp/w6-e2e/packages/intelligence/src
+        run: |
+          python - <<'PY' | tee /tmp/series.json
+          import json
+          from datetime import UTC, datetime
+          from hackathon_intelligence.series import SeriesEvent, series_pair_score, infer_series
+          mumbai=SeriesEvent('mumbai','ETHGlobal Mumbai',datetime(2026,11,5,tzinfo=UTC),'https://ethglobal.com/events/mumbai','ETHGlobal','Mumbai')
+          nasa=SeriesEvent('nasa','NASA Space Apps Challenge 2026',datetime(2026,11,14,tzinfo=UTC),'https://www.spaceappschallenge.org/','NASA','Global')
+          score,evidence=series_pair_score(mumbai,nasa)
+          inferred=infer_series([mumbai,nasa])
+          result={'series_check_ran':True,'pair_score':score,'evidence':list(evidence),'series_groups':len(inferred)}
+          print(json.dumps(result,sort_keys=True))
+          assert score < 0.70 and inferred == {}, result
+          PY
+
+      - name: Verify persisted evidence, history, alert and uncertainty
+        run: |
+          HID=$(cat /tmp/e2e-id.txt)
+          psql "$PGURL" -v ON_ERROR_STOP=1 -At <<SQL | tee /tmp/db-evidence.txt
+          SELECT 'raw_documents='||count(*) FROM raw_documents;
+          SELECT 'source_observations='||count(*) FROM source_observations WHERE hackathon_id='$HID';
+          SELECT 'canonical_selections='||count(*) FROM canonical_field_selections WHERE hackathon_id='$HID' AND active;
+          SELECT 'canonical_changes='||count(*) FROM canonical_changes WHERE hackathon_id='$HID' AND meaningful;
+          SELECT 'alerts='||count(*) FROM alert_events WHERE hackathon_id='$HID';
+          SELECT 'open_review='||count(*) FROM review_queue_items WHERE entity_id='$HID' AND state='OPEN';
+          SELECT 'search_docs='||count(*) FROM hackathon_search_documents WHERE hackathon_id='$HID';
+          SQL
+          grep -q '^raw_documents=2$' /tmp/db-evidence.txt
+          grep -q '^source_observations=4$' /tmp/db-evidence.txt
+          grep -q '^canonical_selections=4$' /tmp/db-evidence.txt
+          grep -q '^canonical_changes=1$' /tmp/db-evidence.txt
+          grep -q '^alerts=1$' /tmp/db-evidence.txt
+          grep -q '^open_review=1$' /tmp/db-evidence.txt
+          grep -q '^search_docs=1$' /tmp/db-evidence.txt
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Reconstruct previously validated W5 production frontend
+        run: |
+          mkdir -p w5-web
+          base64 -d w4-web-gate.tar.xz.b64 > /tmp/w4-web-gate.tar.xz
+          tar -xJf /tmp/w4-web-gate.tar.xz -C w5-web
+          cp w5_overrides/types.ts w5-web/apps/web/lib/types.ts
+          cp w5_overrides/PreferenceEditor.tsx w5-web/apps/web/components/PreferenceEditor.tsx
+          cp w5_overrides/SavedSearchManager.tsx w5-web/apps/web/components/SavedSearchManager.tsx
+          cp w5_overrides/layout.tsx w5-web/apps/web/app/layout.tsx
+          mkdir -p w5-web/apps/web/app/preferences w5-web/apps/web/app/recommendations w5-web/apps/web/app/saved-searches w5-web/apps/web/app/alerts
+          cp w5_overrides/preferences_page.tsx w5-web/apps/web/app/preferences/page.tsx
+          cp w5_overrides/recommendations_page.tsx w5-web/apps/web/app/recommendations/page.tsx
+          cp w5_overrides/saved_searches_page.tsx w5-web/apps/web/app/saved-searches/page.tsx
+          cp w5_overrides/alerts_page.tsx w5-web/apps/web/app/alerts/page.tsx
+
+      - name: Start factual API from the live E2E result
+        run: |
+          E2E_JSON=/tmp/e2e.json python gate/w6_e2e_web_api.py >/tmp/w6-factual-api.log 2>&1 &
+          for i in {1..30}; do curl -fsS http://127.0.0.1:8787/health >/dev/null && exit 0; sleep 1; done
+          cat /tmp/w6-factual-api.log
+          exit 1
+
+      - name: Typecheck and build real Next.js frontend
+        working-directory: w5-web/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
+
+      - name: Verify live-discovered event in real search and detail UI
+        working-directory: w5-web/apps/web
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8787
+          API_URL: http://127.0.0.1:8787
+        run: |
+          npm run start -- -H 127.0.0.1 -p 3000 >/tmp/w6-web.log 2>&1 &
+          for i in {1..30}; do curl -fsS "http://127.0.0.1:3000/search?q=ETHGlobal%20Mumbai" >/dev/null && break; sleep 1; done
+          SLUG=$(cat /tmp/e2e-slug.txt)
+          curl -fsS "http://127.0.0.1:3000/search?q=ETHGlobal%20Mumbai" | tee /tmp/search.html | grep -q 'ETHGlobal Mumbai'
+          curl -fsS "http://127.0.0.1:3000/hackathons/$SLUG" | tee /tmp/detail.html | grep -q 'ETHGlobal Mumbai'
+          grep -q 'Data confidence' /tmp/detail.html
+          grep -q 'Freshness, changes &amp; evidence\|Freshness, changes & evidence' /tmp/detail.html
+          grep -q 'ETHGlobal official' /tmp/detail.html
+          echo '{"real_search_ui":true,"real_detail_ui":true,"provenance_rendered":true}'
+
+      - name: Collect evidence
+        if: always()
+        run: |
+          mkdir -p gate-evidence
+          cp /tmp/e2e.json gate-evidence/e2e.json 2>/dev/null || true
+          cp /tmp/series.json gate-evidence/series.json 2>/dev/null || true
+          cp /tmp/db-evidence.txt gate-evidence/db-evidence.txt 2>/dev/null || true
+          printf '{"e2e_bundle_sha256":"fe97c94de5f7ad19732dbfd284f002b18c0c297bafddca9bbaddc411ee95fdee","frontend_baseline_run":35905927315}\n' > gate-evidence/manifest.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: w6-final-e2e-evidence
+          path: gate-evidence/
