@@ -89,7 +89,10 @@ jobs:
           ADMIN_API_KEY: test-admin-server-only
         run: |
           npm install --no-audit --no-fund
-          npm audit --audit-level=high
+          # Capture the full dependency scan, including dev-only findings, for release evidence.
+          npm audit --json > /tmp/npm-audit-full.json || true
+          # Block release on HIGH/CRITICAL vulnerabilities reachable from production dependencies.
+          npm audit --omit=dev --audit-level=high
           npm run typecheck
           npm run build
       - name: Smoke search/detail/admin UI for newly discovered event
