@@ -35,7 +35,10 @@ class H(BaseHTTPRequestHandler):
    if not self.admin_ok(): return self.out(401,{'detail':'admin authorization required'})
    if p.path=='/admin/review-queue':
     queue=q.get('queue_type',[None])[0]
-    rows=db_rows("SELECT id,queue_type,severity,state,entity_id,source_id,payload,created_at FROM review_queue_items WHERE state='OPEN' AND (%s IS NULL OR queue_type=%s) ORDER BY created_at",(queue,queue))
+    if queue:
+     rows=db_rows("SELECT id,queue_type,severity,state,entity_id,source_id,payload,created_at FROM review_queue_items WHERE state='OPEN' AND queue_type=%s ORDER BY created_at",(queue,))
+    else:
+     rows=db_rows("SELECT id,queue_type,severity,state,entity_id,source_id,payload,created_at FROM review_queue_items WHERE state='OPEN' ORDER BY created_at")
     return self.out(200,rows)
    if p.path=='/admin/source-health':
     rows=db_rows("""SELECT s.id,s.name,s.active,s.parser_version,s.last_success_at,s.last_error_at,
