@@ -107,10 +107,15 @@ jobs:
         run: |
           npm run start -- -H 127.0.0.1 -p 3000 >/tmp/w6-web.log 2>&1 &
           for i in {1..30}; do curl -fsS http://127.0.0.1:3000/ >/dev/null && break; sleep 1; done
-          curl -fsS 'http://127.0.0.1:3000/search?q=ETHGlobal%20Mumbai' | tee /tmp/search.html | grep -q 'ETHGlobal Mumbai'
-          curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 | tee /tmp/detail.html | grep -q 'ETHGlobal Mumbai'
-          grep -q 'Canonical official event page' /tmp/detail.html
-          curl -fsS http://127.0.0.1:3000/admin | tee /tmp/admin.html | grep -q 'LOW_CONFIDENCE'
-          grep -q 'prize' /tmp/admin.html
+          curl -fsS 'http://127.0.0.1:3000/search?q=ETHGlobal%20Mumbai' -o /tmp/search.html
+          curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 -o /tmp/detail.html
+          curl -fsS http://127.0.0.1:3000/admin -o /tmp/admin.html
+          echo "search bytes=$(wc -c </tmp/search.html) detail bytes=$(wc -c </tmp/detail.html) admin bytes=$(wc -c </tmp/admin.html)"
+          echo 'ASSERT search-event'; grep -q 'ETHGlobal Mumbai' /tmp/search.html
+          echo 'ASSERT detail-event'; grep -q 'ETHGlobal Mumbai' /tmp/detail.html
+          echo 'ASSERT detail-evidence'; grep -q 'Canonical official event page' /tmp/detail.html
+          echo 'ASSERT admin-queue'; grep -q 'LOW_CONFIDENCE' /tmp/admin.html
+          echo 'ASSERT admin-prize'; grep -qi 'prize' /tmp/admin.html
+          echo 'ALL_UI_SMOKES_PASS'
       - name: Print release evidence
         run: cat /tmp/w6_e2e.json
