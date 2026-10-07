@@ -107,9 +107,10 @@ jobs:
         run: |
           npm run start -- -H 127.0.0.1 -p 3000 >/tmp/w6-web.log 2>&1 &
           for i in {1..30}; do curl -fsS http://127.0.0.1:3000/ >/dev/null && break; sleep 1; done
-          curl -fsS http://127.0.0.1:3000/ | grep -q 'ETHGlobal Mumbai'
-          curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 | grep -q 'ETHGlobal Mumbai'
-          curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 | grep -q 'Canonical official event page'
-          curl -fsS http://127.0.0.1:3000/admin | grep -q 'Admin'
+          curl -fsS 'http://127.0.0.1:3000/search?q=ETHGlobal%20Mumbai' | tee /tmp/search.html | grep -q 'ETHGlobal Mumbai'
+          curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 | tee /tmp/detail.html | grep -q 'ETHGlobal Mumbai'
+          grep -q 'Canonical official event page' /tmp/detail.html
+          curl -fsS http://127.0.0.1:3000/admin | tee /tmp/admin.html | grep -q 'LOW_CONFIDENCE'
+          grep -q 'prize' /tmp/admin.html
       - name: Print release evidence
         run: cat /tmp/w6_e2e.json
