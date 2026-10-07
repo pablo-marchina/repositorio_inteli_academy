@@ -22,14 +22,16 @@ jobs:
       DATABASE_URL: postgresql://hackathon:hackathon@127.0.0.1:5432/hackathon
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-      MINIO_IMAGE: minio/minio:RELEASE.2025-09-07T16-13-09Z
-      MC_IMAGE: minio/mc:RELEASE.2025-08-13T08-35-41Z
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
+      MINIO_IMAGE: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     steps:
       - uses: actions/checkout@v4
       - name: Start pinned community MinIO container
         run: |
+          aws --version
           docker pull "$MINIO_IMAGE"
-          docker pull "$MC_IMAGE"
           docker run -d --name w6-minio \
             -p 9000:9000 \
             -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
@@ -40,13 +42,8 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null
-          mkdir -p /tmp/mc-config /tmp/raw
-          docker run --rm --network host \
-            -v /tmp/mc-config:/root/.mc \
-            "$MC_IMAGE" alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
-          docker run --rm --network host \
-            -v /tmp/mc-config:/root/.mc \
-            "$MC_IMAGE" mb --ignore-existing local/hackathon-raw
+          aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://hackathon-raw
+          mkdir -p /tmp/raw
       - name: Seed canonical row and raw object reference
         run: |
           psql "$DATABASE_URL" <<'SQL'
@@ -56,39 +53,25 @@ jobs:
           INSERT INTO raw_documents(hackathon_id,object_storage_key) VALUES(1,'raw/w6/object-1.html');
           SQL
           echo 'official raw html evidence' >/tmp/raw/object-1.html
-          docker run --rm --network host \
-            -v /tmp/mc-config:/root/.mc \
-            -v /tmp/raw:/work:ro \
-            "$MC_IMAGE" cp /work/object-1.html local/hackathon-raw/raw/w6/object-1.html
+          aws --endpoint-url http://127.0.0.1:9000 s3 cp /tmp/raw/object-1.html s3://hackathon-raw/raw/w6/object-1.html
       - name: Backup database and object storage
         run: |
           pg_dump --format=custom --no-owner --no-acl --file=/tmp/w6.dump "$DATABASE_URL"
           mkdir -p /tmp/object-backup
-          docker run --rm --network host \
-            -v /tmp/mc-config:/root/.mc \
-            -v /tmp/object-backup:/backup \
-            "$MC_IMAGE" cp --recursive local/hackathon-raw/ /backup/
+          aws --endpoint-url http://127.0.0.1:9000 s3 sync s3://hackathon-raw/ /tmp/object-backup/
           sha256sum /tmp/w6.dump /tmp/object-backup/raw/w6/object-1.html | tee /tmp/backup.sha256
       - name: Destroy and restore
         run: |
           psql "$DATABASE_URL" -c 'DROP TABLE raw_documents; DROP TABLE hackathons;'
-          docker run --rm --network host \
-            -v /tmp/mc-config:/root/.mc \
-            "$MC_IMAGE" rm --recursive --force local/hackathon-raw/
+          aws --endpoint-url http://127.0.0.1:9000 s3 rm s3://hackathon-raw/ --recursive
           pg_restore --clean --if-exists --no-owner --no-acl --dbname="$DATABASE_URL" /tmp/w6.dump
-          docker run --rm --network host \
-            -v /tmp/mc-config:/root/.mc \
-            -v /tmp/object-backup:/backup:ro \
-            "$MC_IMAGE" cp --recursive /backup/ local/hackathon-raw/
+          aws --endpoint-url http://127.0.0.1:9000 s3 sync /tmp/object-backup/ s3://hackathon-raw/
       - name: Verify clean recovery
         run: |
           test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM hackathons')" = '1'
           test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM raw_documents')" = '1'
           mkdir -p /tmp/restored
-          docker run --rm --network host \
-            -v /tmp/mc-config:/root/.mc \
-            -v /tmp/restored:/restore \
-            "$MC_IMAGE" cp local/hackathon-raw/raw/w6/object-1.html /restore/object-1.html
+          aws --endpoint-url http://127.0.0.1:9000 s3 cp s3://hackathon-raw/raw/w6/object-1.html /tmp/restored/object-1.html
           test "$(cat /tmp/restored/object-1.html)" = 'official raw html evidence'
           test "$(psql "$DATABASE_URL" -Atc "SELECT object_storage_key FROM raw_documents WHERE id=1")" = 'raw/w6/object-1.html'
           echo '{"database_restored":true,"raw_reference_restored":true,"object_restored":true,"rpo_hours":24,"rto_hours":2}'
