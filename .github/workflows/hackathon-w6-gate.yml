@@ -110,10 +110,19 @@ jobs:
           curl -fsS 'http://127.0.0.1:3000/search?q=ETHGlobal%20Mumbai' -o /tmp/search.html
           curl -fsS http://127.0.0.1:3000/hackathons/ethglobal-mumbai-2026 -o /tmp/detail.html
           curl -fsS http://127.0.0.1:3000/admin -o /tmp/admin.html
+          curl -fsS http://127.0.0.1:8787/v1/hackathons/ethglobal-mumbai-2026 -o /tmp/detail.json
           echo "search bytes=$(wc -c </tmp/search.html) detail bytes=$(wc -c </tmp/detail.html) admin bytes=$(wc -c </tmp/admin.html)"
           echo 'ASSERT search-event'; grep -q 'ETHGlobal Mumbai' /tmp/search.html
           echo 'ASSERT detail-event'; grep -q 'ETHGlobal Mumbai' /tmp/detail.html
-          echo 'ASSERT detail-evidence'; grep -q 'Canonical official event page' /tmp/detail.html
+          echo 'ASSERT canonical-provenance-history'; python - <<'PY'
+import json
+d=json.load(open('/tmp/detail.json'))
+assert d['evidence'] and d['evidence'][0]['source_name']=='ETHGlobal'
+assert d['evidence'][0]['evidence_text']=='Canonical official event page'
+assert d['recent_changes'] and d['recent_changes'][0]['change_type']=='REGISTRATION_OPEN'
+assert d['links'] and d['links'][0]['is_official'] is True
+print('CANONICAL_PROVENANCE_HISTORY_PASS')
+PY
           echo 'ASSERT admin-queue'; grep -q 'LOW_CONFIDENCE' /tmp/admin.html
           echo 'ASSERT admin-prize'; grep -qi 'prize' /tmp/admin.html
           echo 'ALL_UI_SMOKES_PASS'
