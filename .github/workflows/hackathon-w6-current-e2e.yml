@@ -1,0 +1,182 @@
+name: Hackathon W6 current E2E gate
+on:
+  push:
+    branches: [tmp/hackathon-w6-current-e2e]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon
+          POSTGRES_DB: hackathon
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hackathon -d hackathon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://hackathon:hackathon@localhost:5432/hackathon
+      APP_ENV: test
+      ADMIN_API_KEY: w6-admin-gate
+      AUTH_STATE_SECRET: w6-auth-state-gate-0123456789
+      API_URL: http://127.0.0.1:8000
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+      PUBLIC_API_BASE_URL: http://127.0.0.1:8000
+      WEB_BASE_URL: http://127.0.0.1:3000
+      TRUSTED_HOSTS: localhost,127.0.0.1,testserver
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify and extract exact W6 bundle
+        run: |
+          echo "8e2d9c615bea960dc04931c0896171442357eba7fd32cda2a9d4d4278189f4e7  gate/w6_current_bundle.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/w6-current
+          tar -xzf gate/w6_current_bundle.tar.gz -C /tmp/w6-current
+          cd /tmp/w6-current
+          test -f scripts/ops/e2e_acceptance.py
+          test -f db/alembic/versions/0006_w6_release_hardening.py
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install exact application dependencies
+        working-directory: /tmp/w6-current
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pytest pip-audit
+
+      - name: Full local regression and repository verifier
+        working-directory: /tmp/w6-current
+        run: |
+          pytest -q
+          python scripts/verify_repository.py
+          python scripts/run_evals.py --output /tmp/w6-evals.json
+
+      - name: Apply exact migration chain to PostgreSQL 16
+        working-directory: /tmp/w6-current
+        run: |
+          alembic -c db/alembic.ini upgrade head
+          psql "postgresql://hackathon:hackathon@localhost:5432/hackathon" -Atc "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | tee /tmp/table-count.txt
+          test "$(cat /tmp/table-count.txt)" -ge 78
+          psql "postgresql://hackathon:hackathon@localhost:5432/hackathon" -Atc "select count(*) from pg_extension where extname in ('pgcrypto','citext','pg_trgm','unaccent','vector')" | grep '^5$'
+
+      - name: Source-policy and robots decision for ETHGlobal
+        working-directory: /tmp/w6-current
+        run: |
+          python - <<'PY'
+          import asyncio, json, httpx
+          from hackathon_sources.robots import RobotsCache
+          from hackathon_sources.models import IngestionMode, PermissionStatus, SourceDefinition
+          from hackathon_sources.policy import may_fetch_details
+
+          async def main():
+              source=SourceDefinition(
+                  id="ethglobal-w6-e2e",
+                  name="ETHGlobal official",
+                  domain="ethglobal.com",
+                  source_family="ethglobal",
+                  source_type="official",
+                  ingestion_mode=IngestionMode.STATIC_HTML,
+                  permission_status=PermissionStatus.ALLOWED,
+                  detail_extraction_enabled=True,
+                  seed_urls=("https://ethglobal.com/events",),
+                  allowed_hosts=("ethglobal.com",),
+              )
+              policy=may_fetch_details(source)
+              assert policy.allowed, policy
+              async with httpx.AsyncClient(timeout=30, headers={"User-Agent":"HackathonIntelligenceBot/0.1 (+release-gate)"}) as client:
+                  robots=RobotsCache(client, "HackathonIntelligenceBot/0.1 (+release-gate)")
+                  listing=await robots.allowed("https://ethglobal.com/events")
+                  detail=await robots.allowed("https://ethglobal.com/events/mumbai/info")
+              assert listing and detail, (listing,detail)
+              print(json.dumps({"source_policy":policy.reason,"robots_listing":listing,"robots_detail":detail}))
+          asyncio.run(main())
+          PY
+
+      - name: Run exact live E2E pipeline
+        working-directory: /tmp/w6-current
+        run: |
+          python scripts/ops/e2e_acceptance.py | tee /tmp/e2e.json
+          python - <<'PY'
+          import json
+          line=open('/tmp/e2e.json').read().strip().splitlines()[-1]
+          data=json.loads(line)
+          required=[
+            data["candidate_discovered"],
+            data["related_sources_collected"] >= 2,
+            data["classified"],
+            data["search_indexed"],
+            data["recommendation_score"] is not None,
+            bool(data["recommendation_reasons"]),
+            data["alert_generated"],
+            data["admin_uncertain_decision_visible"],
+          ]
+          assert all(required), data
+          open('/tmp/e2e-slug.txt','w').write(data["slug"])
+          print(json.dumps(data,indent=2,sort_keys=True))
+          PY
+
+      - name: Start real API and verify search/detail/admin surfaces
+        working-directory: /tmp/w6-current
+        run: |
+          uvicorn hackathon_api.main:app --host 127.0.0.1 --port 8000 >/tmp/api.log 2>&1 &
+          echo $! >/tmp/api.pid
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8000/health >/dev/null && break; sleep 1; done
+          SLUG=$(cat /tmp/e2e-slug.txt)
+          curl -fsS "http://127.0.0.1:8000/v1/hackathons?q=ETHGlobal%20Mumbai&limit=20" | tee /tmp/search.json | grep -q "$SLUG"
+          curl -fsS "http://127.0.0.1:8000/v1/hackathons/$SLUG" | tee /tmp/detail.json | grep -q '"name":"ETHGlobal Mumbai"'
+          curl -fsS -H "x-admin-api-key: w6-admin-gate" "http://127.0.0.1:8000/admin/review-queue?queue_type=LOW_CONFIDENCE_FIELD" | tee /tmp/admin.json | grep -q "$SLUG\|start_at"
+          python - <<'PY'
+          import json
+          search=json.load(open('/tmp/search.json'))
+          detail=json.load(open('/tmp/detail.json'))
+          admin=json.load(open('/tmp/admin.json'))
+          print(json.dumps({"api_search_items":len(search["items"]),"detail_name":detail["name"],"admin_uncertain_items":len(admin)}))
+          PY
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Build and start exact Next.js frontend
+        working-directory: /tmp/w6-current/apps/web
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
+          npm start >/tmp/web.log 2>&1 &
+          echo $! >/tmp/web.pid
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:3000/search >/dev/null && break; sleep 1; done
+
+      - name: Verify event appears in real search/detail UI
+        working-directory: /tmp/w6-current
+        run: |
+          SLUG=$(cat /tmp/e2e-slug.txt)
+          curl -fsS "http://127.0.0.1:3000/search?q=ETHGlobal%20Mumbai" | tee /tmp/search.html | grep -q "ETHGlobal Mumbai"
+          curl -fsS "http://127.0.0.1:3000/hackathons/$SLUG" | tee /tmp/detail.html | grep -q "ETHGlobal Mumbai"
+          grep -q "Freshness, changes & evidence" /tmp/detail.html
+          grep -q "Data confidence" /tmp/detail.html
+          echo '{"real_search_ui":true,"real_detail_ui":true}'
+
+      - name: Persist E2E gate evidence
+        if: always()
+        run: |
+          mkdir -p gate-evidence
+          cp /tmp/e2e.json gate-evidence/e2e.json 2>/dev/null || true
+          cp /tmp/w6-evals.json gate-evidence/evals.json 2>/dev/null || true
+          cp /tmp/search.json gate-evidence/search.json 2>/dev/null || true
+          cp /tmp/detail.json gate-evidence/detail.json 2>/dev/null || true
+          cp /tmp/admin.json gate-evidence/admin.json 2>/dev/null || true
+          printf '{"bundle_sha256":"8e2d9c615bea960dc04931c0896171442357eba7fd32cda2a9d4d4278189f4e7"}\n' > gate-evidence/bundle.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: w6-current-e2e-evidence
+          path: gate-evidence/
