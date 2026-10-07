@@ -88,6 +88,9 @@ jobs:
           API_URL: http://127.0.0.1:8787
           ADMIN_API_KEY: test-admin-server-only
         run: |
+          # Promote the validated W4 snapshot to the current patched Next.js release before install.
+          npm pkg set dependencies.next=16.4.0
+          npm pkg set devDependencies.eslint-config-next=16.4.0
           npm install --no-audit --no-fund
           # Capture the full dependency scan, including dev-only findings, for release evidence.
           npm audit --json > /tmp/npm-audit-full.json || true
