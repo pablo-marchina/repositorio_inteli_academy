@@ -20,29 +20,24 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       DATABASE_URL: postgresql://hackathon:hackathon@127.0.0.1:5432/hackathon
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-      AWS_ACCESS_KEY_ID: minioadmin
-      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_ACCESS_KEY_ID: w6test
+      AWS_SECRET_ACCESS_KEY: w6test
       AWS_DEFAULT_REGION: us-east-1
-      MINIO_IMAGE: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+      AWS_ENDPOINT_URL: http://127.0.0.1:9000
     steps:
       - uses: actions/checkout@v4
-      - name: Start pinned community MinIO container
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Start isolated S3-compatible object store
         run: |
-          aws --version
-          docker pull "$MINIO_IMAGE"
-          docker run -d --name w6-minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
-            -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            "$MINIO_IMAGE" server /data --address :9000
+          python -m pip install 'moto[server]==5.2.2'
+          moto_server -H 127.0.0.1 -p 9000 >/tmp/moto-s3.log 2>&1 &
           for i in {1..45}; do
-            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then break; fi
+            if curl -fsS http://127.0.0.1:9000/ >/dev/null; then break; fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null
-          aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://hackathon-raw
+          curl -fsS http://127.0.0.1:9000/ >/dev/null
+          aws s3 mb s3://hackathon-raw
           mkdir -p /tmp/raw
       - name: Seed canonical row and raw object reference
         run: |
@@ -53,28 +48,25 @@ jobs:
           INSERT INTO raw_documents(hackathon_id,object_storage_key) VALUES(1,'raw/w6/object-1.html');
           SQL
           echo 'official raw html evidence' >/tmp/raw/object-1.html
-          aws --endpoint-url http://127.0.0.1:9000 s3 cp /tmp/raw/object-1.html s3://hackathon-raw/raw/w6/object-1.html
+          aws s3 cp /tmp/raw/object-1.html s3://hackathon-raw/raw/w6/object-1.html
       - name: Backup database and object storage
         run: |
           pg_dump --format=custom --no-owner --no-acl --file=/tmp/w6.dump "$DATABASE_URL"
           mkdir -p /tmp/object-backup
-          aws --endpoint-url http://127.0.0.1:9000 s3 sync s3://hackathon-raw/ /tmp/object-backup/
+          aws s3 sync s3://hackathon-raw/ /tmp/object-backup/
           sha256sum /tmp/w6.dump /tmp/object-backup/raw/w6/object-1.html | tee /tmp/backup.sha256
       - name: Destroy and restore
         run: |
           psql "$DATABASE_URL" -c 'DROP TABLE raw_documents; DROP TABLE hackathons;'
-          aws --endpoint-url http://127.0.0.1:9000 s3 rm s3://hackathon-raw/ --recursive
+          aws s3 rm s3://hackathon-raw/ --recursive
           pg_restore --clean --if-exists --no-owner --no-acl --dbname="$DATABASE_URL" /tmp/w6.dump
-          aws --endpoint-url http://127.0.0.1:9000 s3 sync /tmp/object-backup/ s3://hackathon-raw/
+          aws s3 sync /tmp/object-backup/ s3://hackathon-raw/
       - name: Verify clean recovery
         run: |
           test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM hackathons')" = '1'
           test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM raw_documents')" = '1'
           mkdir -p /tmp/restored
-          aws --endpoint-url http://127.0.0.1:9000 s3 cp s3://hackathon-raw/raw/w6/object-1.html /tmp/restored/object-1.html
+          aws s3 cp s3://hackathon-raw/raw/w6/object-1.html /tmp/restored/object-1.html
           test "$(cat /tmp/restored/object-1.html)" = 'official raw html evidence'
           test "$(psql "$DATABASE_URL" -Atc "SELECT object_storage_key FROM raw_documents WHERE id=1")" = 'raw/w6/object-1.html'
-          echo '{"database_restored":true,"raw_reference_restored":true,"object_restored":true,"rpo_hours":24,"rto_hours":2}'
-      - name: Cleanup MinIO container
-        if: always()
-        run: docker rm -f w6-minio >/dev/null 2>&1 || true
+          echo '{"database_restored":true,"raw_reference_restored":true,"object_restored":true,"rpo_hours":24,"rto_hours":2,"s3_test_server":"moto-5.2.2"}'
